@@ -180,6 +180,101 @@ def delete_ground_truth(record_id: str, db: Session = Depends(get_db)):
     return {"status": "deleted"}
 
 
+# Embedding model cache
+_embed_model = None
+_dataset_embeddings_cache: dict = {}  # {dataset_name: {"records": [...], "embeddings": np.array}}
+
+
+def _get_embedding_model():
+    """Lazy load HuggingFace embedding model."""
+    global _embed_model
+    if _embed_model is None:
+        from sentence_transformers import SentenceTransformer
+        _embed_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2", device="cpu")
+    return _embed_model
+
+
+@router.get("/ground-truth/match")
+def match_ground_truth_semantic(
+    query: str = Query(..., description="The query to match against dataset questions"),
+    dataset_name: str = Query(..., description="Name of the dataset to search"),
+    project: str = Query("default"),
+    db: Session = Depends(get_db),
+):
+    """
+    Find the closest ground truth record in a dataset using semantic similarity.
+    Returns the best match with similarity score.
+    """
+    # Fetch all records in the dataset
+    records = (
+        db.query(GroundTruthRecord)
+        .filter(GroundTruthRecord.project == project)
+        .filter(GroundTruthRecord.dataset_name == dataset_name)
+        .all()
+    )
+
+    if not records:
+        return {"found": False, "match": None, "score": 0}
+
+    # Try exact match first (fastest)
+    for r in records:
+        if r.question.strip().lower() == query.strip().lower():
+            return {
+                "found": True,
+                "match": {
+                    "id": r.id,
+                    "question": r.question,
+                    "ground_truth": r.ground_truth,
+                    "context": r.context,
+                },
+                "score": 1.0,
+                "match_type": "exact",
+            }
+
+    # Semantic match using embeddings
+    try:
+        import numpy as np
+
+        cache_key = f"{project}:{dataset_name}"
+        cached = _dataset_embeddings_cache.get(cache_key)
+
+        # Cache invalidation: re-embed if record count changed
+        if not cached or len(cached.get("records", [])) != len(records):
+            model = _get_embedding_model()
+            questions = [r.question for r in records]
+            embeddings = model.encode(questions, convert_to_numpy=True, show_progress_bar=False)
+            cached = {"records": records, "embeddings": embeddings}
+            _dataset_embeddings_cache[cache_key] = cached
+
+        # Embed the query
+        model = _get_embedding_model()
+        query_emb = model.encode([query], convert_to_numpy=True, show_progress_bar=False)[0]
+
+        # Cosine similarity
+        embeddings = cached["embeddings"]
+        norms = np.linalg.norm(embeddings, axis=1) * np.linalg.norm(query_emb)
+        norms[norms == 0] = 1e-10
+        similarities = (embeddings @ query_emb) / norms
+
+        best_idx = int(np.argmax(similarities))
+        best_score = float(similarities[best_idx])
+        best_record = cached["records"][best_idx]
+
+        return {
+            "found": True,
+            "match": {
+                "id": best_record.id,
+                "question": best_record.question,
+                "ground_truth": best_record.ground_truth,
+                "context": best_record.context,
+            },
+            "score": round(best_score, 4),
+            "match_type": "semantic",
+        }
+    except Exception as e:
+        return {"found": False, "match": None, "score": 0, "error": str(e)}
+
+
 @router.delete("/ground-truth/dataset/{dataset_name}")
 def delete_dataset(
     dataset_name: str,
@@ -195,3 +290,204 @@ def delete_dataset(
     )
     db.commit()
     return {"status": "deleted", "records_deleted": deleted}
+
+
+# ========================================
+# AI Ground Truth Generator
+# ========================================
+
+# Static system prompt for golden dataset generation
+GOLDEN_DATASET_PROMPT = """You are an expert at creating high-quality test datasets for RAG (Retrieval-Augmented Generation) systems.
+
+Your task: Read the document below and generate exactly __NUM_QUESTIONS__ diverse question-answer pairs that test understanding of the content.
+
+Rules:
+1. Generate a MIX of question types:
+   - Factual (who, what, when, where)
+   - Analytical (why, how, compare)
+   - Inferential (what can we conclude)
+   - Specific detail (numbers, dates, names)
+2. Each question must be answerable using ONLY the document.
+3. Each ground_truth answer must be FACTUAL and grounded in the document text.
+4. Include a "context" field that quotes the EXACT relevant passage from the document.
+5. Vary question difficulty from easy to hard.
+6. Do NOT make up information not in the document.
+7. Return ONLY a valid JSON array. No markdown, no explanation, no commentary.
+
+Output format (strict JSON):
+[
+  {"question": "...", "ground_truth": "...", "context": "exact quote from document"},
+  ...
+]
+
+Document to analyze:
+__DOCUMENT__
+
+Generate exactly __NUM_QUESTIONS__ Q&A pairs as a JSON array. Output ONLY the JSON array."""
+
+
+@router.post("/ground-truth/generate")
+async def generate_ground_truth(
+    file: UploadFile = File(...),
+    project: str = Form("default"),
+    dataset_name: str = Form(""),
+    num_questions: int = Form(10),
+    llm_config_id: str = Form(""),
+    save: bool = Form(False),
+    db: Session = Depends(get_db),
+):
+    """
+    Generate a golden ground truth dataset from an uploaded document using an LLM.
+    """
+    if num_questions < 1 or num_questions > 1000:
+        raise HTTPException(400, "num_questions must be between 1 and 1000")
+
+    # Read file content
+    import tempfile
+    import os as _os
+    suffix = _os.path.splitext(file.filename)[1]
+    content = await file.read()
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp.write(content)
+        tmp_path = tmp.name
+
+    try:
+        if suffix.lower() == ".pdf":
+            from langchain_community.document_loaders import PyPDFLoader
+            loader = PyPDFLoader(tmp_path)
+            docs = loader.load()
+            doc_text = "\n\n".join([d.page_content for d in docs])
+        else:
+            doc_text = content.decode("utf-8", errors="ignore")
+    finally:
+        _os.unlink(tmp_path)
+
+    if not doc_text.strip():
+        raise HTTPException(400, "Document is empty")
+
+    # Truncate very long documents to fit context window (~30K chars)
+    if len(doc_text) > 30000:
+        doc_text = doc_text[:30000] + "\n\n... [truncated]"
+
+    # Get LLM
+    from app.db.models import LLMConfigRecord
+    llm_cfg = None
+    if llm_config_id:
+        llm_cfg = db.query(LLMConfigRecord).filter(LLMConfigRecord.id == llm_config_id).first()
+    if not llm_cfg:
+        llm_cfg = (
+            db.query(LLMConfigRecord)
+            .filter(LLMConfigRecord.use_for_auto_eval == True, LLMConfigRecord.is_active == True)
+            .first()
+        )
+    if not llm_cfg:
+        llm_cfg = db.query(LLMConfigRecord).filter(LLMConfigRecord.is_active == True).first()
+    if not llm_cfg:
+        raise HTTPException(400, "No LLM configured. Add an LLM in LLM Config first.")
+
+    # Build prompt
+    prompt = (
+        GOLDEN_DATASET_PROMPT
+        .replace("__NUM_QUESTIONS__", str(num_questions))
+        .replace("__DOCUMENT__", doc_text)
+    )
+
+    # Call LLM
+    try:
+        from litellm import completion
+        prefixes = {
+            "openai": "", "azure_openai": "azure/", "anthropic": "anthropic/",
+            "gemini": "gemini/", "ollama": "ollama/", "groq": "groq/",
+        }
+        prefix = prefixes.get(llm_cfg.provider, "")
+        if llm_cfg.provider == "azure_openai" and llm_cfg.azure_deployment:
+            model = f"azure/{llm_cfg.azure_deployment}"
+        else:
+            model = f"{prefix}{llm_cfg.model_id}"
+
+        # Allow large output for many questions
+        max_tok = max(2048, num_questions * 150)
+
+        kwargs = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.4,
+        }
+        if llm_cfg.provider == "azure_openai":
+            kwargs["max_completion_tokens"] = max_tok
+            kwargs["api_version"] = llm_cfg.api_version
+        else:
+            kwargs["max_tokens"] = max_tok
+        if llm_cfg.api_key:
+            kwargs["api_key"] = llm_cfg.api_key
+        if llm_cfg.api_base:
+            kwargs["api_base"] = llm_cfg.api_base
+
+        response = completion(**kwargs)
+        raw_output = response.choices[0].message.content.strip()
+
+        # Strip markdown code fences if present
+        if raw_output.startswith("```"):
+            lines = raw_output.split("\n")
+            raw_output = "\n".join(lines[1:-1] if lines[-1].startswith("```") else lines[1:])
+
+        # Parse JSON
+        try:
+            generated = json.loads(raw_output)
+            if not isinstance(generated, list):
+                raise ValueError("Output is not a JSON array")
+        except json.JSONDecodeError as e:
+            # Try to extract JSON array from the text
+            import re as _re
+            match = _re.search(r"\[.*\]", raw_output, _re.DOTALL)
+            if match:
+                generated = json.loads(match.group(0))
+            else:
+                raise HTTPException(500, f"LLM returned invalid JSON: {str(e)[:200]}")
+
+        # Validate records
+        valid_records = []
+        for r in generated:
+            if isinstance(r, dict) and "question" in r and "ground_truth" in r:
+                valid_records.append({
+                    "question": str(r.get("question", "")),
+                    "ground_truth": str(r.get("ground_truth", "")),
+                    "context": str(r.get("context", "")),
+                })
+
+        if not valid_records:
+            raise HTTPException(500, "LLM did not return any valid Q&A records")
+
+        # Optionally save to DB
+        saved_count = 0
+        if save:
+            ds_name = dataset_name or f"ai-generated-{file.filename}"
+            for r in valid_records:
+                gt = GroundTruthRecord(
+                    id=str(uuid.uuid4()),
+                    project=project,
+                    dataset_name=ds_name,
+                    question=r["question"],
+                    ground_truth=r["ground_truth"],
+                    context=r["context"],
+                    metadata_json={"generated_by": "ai", "source_file": file.filename, "llm": f"{llm_cfg.provider}/{llm_cfg.model_id}"},
+                )
+                db.add(gt)
+                saved_count += 1
+            db.commit()
+
+        return {
+            "status": "generated",
+            "filename": file.filename,
+            "num_generated": len(valid_records),
+            "num_requested": num_questions,
+            "records": valid_records,
+            "llm_used": f"{llm_cfg.provider}/{llm_cfg.model_id}",
+            "saved_to_db": saved_count,
+            "dataset_name": dataset_name or (f"ai-generated-{file.filename}" if save else None),
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Generation failed: {str(e)[:300]}")

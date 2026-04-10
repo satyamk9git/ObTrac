@@ -30,6 +30,29 @@ function PromptDetailContent() {
   const [testVars, setTestVars] = useState<Record<string, string>>({});
   const [renderResult, setRenderResult] = useState("");
 
+  // Merge state
+  const [mergeSelected, setMergeSelected] = useState<number[]>([]);
+  const [mergeLLMs, setMergeLLMs] = useState<any[]>([]);
+  const [mergeLLMId, setMergeLLMId] = useState("");
+  const [mergeDraft, setMergeDraft] = useState<any>(null);
+  const [mergeRunning, setMergeRunning] = useState(false);
+  const [editedDraftTemplate, setEditedDraftTemplate] = useState("");
+
+  // Lineage / version detail expand
+  const [expandedVersion, setExpandedVersion] = useState<number | null>(null);
+
+  // Fetch LLM configs for merge dropdown
+  useEffect(() => {
+    fetch(`${API}/llm-configs`)
+      .then(r => r.json())
+      .then(d => {
+        setMergeLLMs(d.configs || []);
+        const autoEval = d.configs?.find((c: any) => c.use_for_auto_eval);
+        if (autoEval) setMergeLLMId(autoEval.id);
+      })
+      .catch(() => {});
+  }, []);
+
   const fetchPrompt = () => {
     setLoading(true);
     fetch(`${API}/prompts/${name}?project=${encodeURIComponent(project)}`)
@@ -78,6 +101,76 @@ function PromptDetailContent() {
     fetchPrompt();
   };
 
+  const handleMerge = async () => {
+    if (mergeSelected.length < 2) {
+      alert("Select at least 2 versions");
+      return;
+    }
+    setMergeRunning(true);
+    setMergeDraft(null);
+    try {
+      const res = await fetch(`${API}/prompts/${name}/merge?project=${encodeURIComponent(project)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          versions: mergeSelected,
+          llm_config_id: mergeLLMId || null,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setMergeDraft(data);
+        setEditedDraftTemplate(data.merged_template || "");
+      } else {
+        alert(data.detail || "Merge failed");
+      }
+    } catch (e) {
+      alert(`Error: ${e}`);
+    } finally {
+      setMergeRunning(false);
+    }
+  };
+
+  const handleApproveDraft = async () => {
+    if (!mergeDraft) return;
+    const res = await fetch(`${API}/prompts/drafts/${mergeDraft.draft_id}/approve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        template: editedDraftTemplate,
+        commit_message: `Merged from versions ${mergeDraft.merged_from.join(", ")} using ${mergeDraft.merged_by_llm}`,
+      }),
+    });
+    if (res.ok) {
+      setMergeDraft(null);
+      setMergeSelected([]);
+      setEditedDraftTemplate("");
+      fetchPrompt();
+      setTab("lineage");
+    }
+  };
+
+  const handleDiscardDraft = async () => {
+    if (!mergeDraft) return;
+    await fetch(`${API}/prompts/drafts/${mergeDraft.draft_id}`, { method: "DELETE" });
+    setMergeDraft(null);
+    setEditedDraftTemplate("");
+  };
+
+  const handleEditFromVersion = (v: any) => {
+    setTemplate(v.template);
+    setModel(v.model || "");
+    setTemperature(v.temperature?.toString() || "");
+    setCommitMsg(`Forked from v${v.version}`);
+    setTab("editor");
+  };
+
+  const toggleMergeVersion = (v: number) => {
+    setMergeSelected(prev =>
+      prev.includes(v) ? prev.filter(x => x !== v) : [...prev, v].sort((a, b) => a - b)
+    );
+  };
+
   const handleRender = async () => {
     const res = await fetch(`${API}/prompts/${name}/render?project=${encodeURIComponent(project)}`, {
       method: "POST",
@@ -100,7 +193,8 @@ function PromptDetailContent() {
 
   const TABS = [
     { id: "editor", label: "Editor" },
-    { id: "versions", label: `Versions (${versions.length})` },
+    { id: "lineage", label: `Lineage (${versions.length})` },
+    { id: "merge", label: "Merge with AI" },
     { id: "diff", label: "Diff" },
     { id: "test", label: "Test / Render" },
     { id: "code", label: "Use in Code" },
@@ -176,40 +270,184 @@ function PromptDetailContent() {
         </div>
       )}
 
-      {/* ============ VERSIONS ============ */}
-      {tab === "versions" && (
-        <div className="card p-0 overflow-hidden">
-          <table className="table-dark">
-            <thead>
-              <tr>
-                <th>Version</th>
-                <th>Commit Message</th>
-                <th>Author</th>
-                <th>Created</th>
-                <th>Status</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {versions.map((v: any) => (
-                <tr key={v.id}>
-                  <td className="font-mono text-indigo-600">v{v.version}</td>
-                  <td className="text-gray-700">{v.commit_message || "—"}</td>
-                  <td className="text-gray-500">{v.created_by || "—"}</td>
-                  <td className="text-xs text-gray-500">{v.created_at ? new Date(v.created_at).toLocaleString() : "—"}</td>
-                  <td>
-                    {v.is_active ? <span className="badge badge-success">Active</span> : <span className="text-xs text-gray-400">—</span>}
-                  </td>
-                  <td>
-                    {!v.is_active && (
-                      <button onClick={() => handleActivate(v.version)}
-                        className="text-xs text-indigo-600 hover:text-indigo-500">Activate</button>
+      {/* ============ LINEAGE ============ */}
+      {tab === "lineage" && (
+        <div className="space-y-2">
+          <p className="text-xs text-gray-500 mb-3">
+            Version history (newest first). Click any version to expand and see the template.
+          </p>
+          {[...versions].sort((a: any, b: any) => b.version - a.version).map((v: any, idx: number) => {
+            const isExpanded = expandedVersion === v.version;
+            const isLast = idx === versions.length - 1;
+            const merged = v.metadata?.merged_from;
+            return (
+              <div key={v.id} className="relative">
+                {/* Connector line */}
+                {!isLast && (
+                  <div className="absolute left-4 top-12 w-0.5 h-full bg-gray-200" />
+                )}
+
+                <div className="flex gap-4">
+                  {/* Node circle */}
+                  <div className="relative shrink-0">
+                    <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${
+                      v.is_active ? "bg-indigo-600 text-white" : "bg-gray-200 text-gray-600"
+                    }`}>
+                      v{v.version}
+                    </div>
+                  </div>
+
+                  {/* Card */}
+                  <div className={`flex-1 card cursor-pointer transition-all ${
+                    isExpanded ? "border-indigo-300" : ""
+                  } ${v.is_active ? "border-l-4 border-l-indigo-500" : ""}`}
+                    onClick={() => setExpandedVersion(isExpanded ? null : v.version)}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-sm font-semibold text-gray-900">v{v.version}</span>
+                          {v.is_active && <span className="badge badge-success text-[9px]">ACTIVE</span>}
+                          {merged && (
+                            <span className="badge badge-purple text-[9px]">
+                              Merged from v{merged.join(", v")}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-sm text-gray-600">{v.commit_message || "—"}</p>
+                        <p className="text-[10px] text-gray-400 mt-1">
+                          {v.created_by || "—"} | {v.created_at ? new Date(v.created_at).toLocaleString() : "—"}
+                        </p>
+                      </div>
+                      <svg className={`w-4 h-4 text-gray-400 transition-transform ${isExpanded ? "rotate-180" : ""}`}
+                        fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </div>
+
+                    {isExpanded && (
+                      <div className="mt-3 pt-3 border-t border-gray-100 space-y-2">
+                        <pre className="text-xs font-mono whitespace-pre-wrap text-green-400 bg-gray-900 p-3 rounded max-h-64 overflow-auto">
+                          {v.template}
+                        </pre>
+                        <div className="flex gap-2">
+                          {!v.is_active && (
+                            <button onClick={(e) => { e.stopPropagation(); handleActivate(v.version); }}
+                              className="text-xs btn-secondary">Activate</button>
+                          )}
+                          <button onClick={(e) => { e.stopPropagation(); handleEditFromVersion(v); }}
+                            className="text-xs btn-primary">Edit & Save as New Version</button>
+                        </div>
+                      </div>
                     )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ============ MERGE WITH AI ============ */}
+      {tab === "merge" && (
+        <div className="space-y-4">
+          {!mergeDraft ? (
+            <>
+              <div className="card">
+                <h3 className="text-sm font-semibold text-gray-700 mb-3">Step 1: Select versions to merge (2+)</h3>
+                <div className="space-y-2">
+                  {versions.map((v: any) => (
+                    <label key={v.id} className={`flex items-center gap-3 p-2 rounded cursor-pointer transition-colors ${
+                      mergeSelected.includes(v.version) ? "bg-indigo-50 border border-indigo-300" : "hover:bg-gray-50 border border-transparent"
+                    }`}>
+                      <input type="checkbox" checked={mergeSelected.includes(v.version)}
+                        onChange={() => toggleMergeVersion(v.version)} className="w-4 h-4" />
+                      <span className="text-sm font-mono text-indigo-600">v{v.version}</span>
+                      {v.is_active && <span className="badge badge-success text-[9px]">ACTIVE</span>}
+                      <span className="text-xs text-gray-600 truncate">{v.commit_message}</span>
+                    </label>
+                  ))}
+                </div>
+                {mergeSelected.length > 0 && mergeSelected.length < 2 && (
+                  <p className="text-xs text-yellow-600 mt-2">Select at least 2 versions</p>
+                )}
+              </div>
+
+              <div className="card">
+                <h3 className="text-sm font-semibold text-gray-700 mb-3">Step 2: Choose LLM for merging</h3>
+                <select value={mergeLLMId} onChange={e => setMergeLLMId(e.target.value)} className="select-dark">
+                  <option value="">Auto-select (use auto-eval LLM)</option>
+                  {mergeLLMs.map(c => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} ({c.provider}/{c.model_id}) {c.use_for_auto_eval ? "★ auto-eval" : ""}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[10px] text-gray-400 mt-1">
+                  The LLM you pick is used to execute the merge. The merge instructions are static and cannot be changed.
+                </p>
+              </div>
+
+              <button onClick={handleMerge} disabled={mergeRunning || mergeSelected.length < 2}
+                className={`px-6 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                  mergeRunning ? "bg-yellow-500 text-white animate-pulse" : "bg-indigo-600 text-white hover:bg-indigo-500"
+                } disabled:opacity-50`}>
+                {mergeRunning ? "AI is merging versions..." : `Merge ${mergeSelected.length} Versions with AI`}
+              </button>
+            </>
+          ) : (
+            <>
+              {/* Draft preview */}
+              <div className="card border-l-4 border-l-purple-400">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-sm font-semibold text-purple-700">Draft Merged Version</h3>
+                  <span className="text-[10px] text-gray-500">
+                    Merged from v{mergeDraft.merged_from.join(", v")} using {mergeDraft.merged_by_llm}
+                  </span>
+                </div>
+                <p className="text-xs text-gray-500 mb-2">
+                  Review the merged template below. Edit if needed, then approve to create v{(activeVersion?.version || 0) + 1}.
+                </p>
+
+                {mergeDraft.warnings?.length > 0 && (
+                  <div className="bg-yellow-50 border border-yellow-200 rounded p-2 mb-2">
+                    {mergeDraft.warnings.map((w: string, i: number) => (
+                      <p key={i} className="text-xs text-yellow-800">⚠ {w}</p>
+                    ))}
+                  </div>
+                )}
+
+                <textarea value={editedDraftTemplate} onChange={e => setEditedDraftTemplate(e.target.value)}
+                  rows={14} className="w-full font-mono text-xs bg-gray-900 text-green-400 rounded-lg p-4 outline-none focus:ring-2 focus:ring-indigo-500" />
+
+                <div className="flex gap-2 mt-3">
+                  <button onClick={handleApproveDraft} className="btn-primary">
+                    Approve & Create New Version
+                  </button>
+                  <button onClick={handleDiscardDraft} className="btn-danger">
+                    Discard
+                  </button>
+                </div>
+              </div>
+
+              {/* Side-by-side: original versions vs merged */}
+              <div className="card">
+                <h3 className="text-sm font-semibold text-gray-700 mb-3">Source Versions</h3>
+                <div className="grid grid-cols-2 gap-3">
+                  {mergeDraft.merged_from.map((vnum: number) => {
+                    const v = versions.find((x: any) => x.version === vnum);
+                    return v ? (
+                      <div key={vnum} className="bg-gray-50 rounded-lg p-3">
+                        <p className="text-xs font-semibold text-gray-700 mb-1">v{v.version}</p>
+                        <pre className="text-[10px] font-mono whitespace-pre-wrap text-gray-600 max-h-40 overflow-auto">
+                          {v.template}
+                        </pre>
+                      </div>
+                    ) : null;
+                  })}
+                </div>
+              </div>
+            </>
+          )}
         </div>
       )}
 

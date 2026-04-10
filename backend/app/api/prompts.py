@@ -67,6 +67,7 @@ def _version_to_dict(v: PromptVersionRecord) -> dict:
         "is_active": v.is_active,
         "commit_message": v.commit_message,
         "created_by": v.created_by,
+        "metadata": v.metadata_json or {},
         "created_at": v.created_at.isoformat() if v.created_at else None,
     }
 
@@ -393,3 +394,252 @@ def render_prompt(
         "variables_used": list(variables.keys()),
         "expected_variables": v.variables or [],
     }
+
+
+# ========================================
+# MERGE — combine multiple versions using LLM
+# ========================================
+
+# Static system prompt for merging — controlled by us, not user
+MERGE_SYSTEM_PROMPT = """You are a prompt engineering expert. You are given multiple versions of a prompt template.
+
+Your task is to analyze each version, identify the strengths of each, and create a single merged version that combines the best aspects of all of them.
+
+Rules:
+1. The merged version MUST use the same VAR_PLACEHOLDER style placeholders as the originals (do not invent new variables, do not remove existing ones).
+2. Keep the merged version concise but complete.
+3. Preserve any explicit instructions, constraints, or rules from any version.
+4. If versions conflict, prefer the more specific/strict instruction.
+5. Return ONLY the merged template text. No explanation, no markdown code fences, no commentary.
+
+Variables that must be present in the output: __EXPECTED_VARS__
+
+Versions to merge:
+__VERSIONS_TEXT__
+
+Now return only the merged template (and nothing else):"""
+
+
+# In-memory draft storage
+_drafts: dict[str, dict] = {}
+
+
+class MergeRequest(BaseModel):
+    versions: list[int]                    # e.g. [2, 3]
+    llm_config_id: Optional[str] = None    # which LLM to use; if None, picks auto-eval LLM
+
+
+@router.post("/{name}/merge")
+def merge_versions(
+    name: str,
+    req: MergeRequest,
+    project: str = Query("default"),
+    db: Session = Depends(get_db),
+):
+    """
+    Merge multiple versions of a prompt using an LLM.
+    Returns a draft (not yet saved as a version).
+    """
+    if len(req.versions) < 2:
+        raise HTTPException(400, "Need at least 2 versions to merge")
+
+    prompt_record = (
+        db.query(PromptRecord)
+        .filter(PromptRecord.project == project, PromptRecord.name == name)
+        .first()
+    )
+    if not prompt_record:
+        raise HTTPException(404, "Prompt not found")
+
+    # Fetch the requested versions
+    selected = []
+    for vnum in req.versions:
+        v = next((x for x in prompt_record.versions if x.version == vnum), None)
+        if not v:
+            raise HTTPException(404, f"Version {vnum} not found")
+        selected.append(v)
+
+    # Collect expected variables (union)
+    all_vars = set()
+    for v in selected:
+        all_vars.update(v.variables or [])
+    expected_vars = sorted(all_vars)
+
+    # Build versions text
+    versions_text = "\n\n".join([
+        f"--- Version {v.version} ---\n{v.template}"
+        for v in selected
+    ])
+
+    # Get LLM to use
+    from app.db.models import LLMConfigRecord
+    llm_cfg = None
+    if req.llm_config_id:
+        llm_cfg = db.query(LLMConfigRecord).filter(LLMConfigRecord.id == req.llm_config_id).first()
+    if not llm_cfg:
+        # Default to auto-eval LLM
+        llm_cfg = (
+            db.query(LLMConfigRecord)
+            .filter(LLMConfigRecord.use_for_auto_eval == True, LLMConfigRecord.is_active == True)
+            .first()
+        )
+    if not llm_cfg:
+        # Fallback to any active LLM
+        llm_cfg = db.query(LLMConfigRecord).filter(LLMConfigRecord.is_active == True).first()
+    if not llm_cfg:
+        raise HTTPException(400, "No LLM configured. Add an LLM in LLM Config first.")
+
+    # Build the merge prompt (using string replace to avoid format() conflicts with {var} in templates)
+    expected_vars_str = ", ".join(f"{{{v}}}" for v in expected_vars)
+    merge_prompt = (
+        MERGE_SYSTEM_PROMPT
+        .replace("__EXPECTED_VARS__", expected_vars_str)
+        .replace("__VERSIONS_TEXT__", versions_text)
+    )
+
+    # Call the LLM via LiteLLM
+    try:
+        from litellm import completion
+        prefixes = {
+            "openai": "", "azure_openai": "azure/", "anthropic": "anthropic/",
+            "gemini": "gemini/", "ollama": "ollama/", "groq": "groq/",
+        }
+        prefix = prefixes.get(llm_cfg.provider, "")
+        if llm_cfg.provider == "azure_openai" and llm_cfg.azure_deployment:
+            model = f"azure/{llm_cfg.azure_deployment}"
+        else:
+            model = f"{prefix}{llm_cfg.model_id}"
+
+        kwargs = {
+            "model": model,
+            "messages": [{"role": "user", "content": merge_prompt}],
+            "temperature": 0.2,
+        }
+        if llm_cfg.provider == "azure_openai":
+            kwargs["max_completion_tokens"] = 1024
+            kwargs["api_version"] = llm_cfg.api_version
+        else:
+            kwargs["max_tokens"] = 1024
+        if llm_cfg.api_key:
+            kwargs["api_key"] = llm_cfg.api_key
+        if llm_cfg.api_base:
+            kwargs["api_base"] = llm_cfg.api_base
+
+        response = completion(**kwargs)
+        merged_template = response.choices[0].message.content.strip()
+
+        # Strip code fences if LLM included them
+        if merged_template.startswith("```"):
+            lines = merged_template.split("\n")
+            merged_template = "\n".join(lines[1:-1] if lines[-1].startswith("```") else lines[1:])
+
+    except Exception as e:
+        raise HTTPException(500, f"LLM merge failed: {str(e)}")
+
+    # Validate variables
+    actual_vars = set(_extract_variables(merged_template))
+    missing = set(expected_vars) - actual_vars
+    extra = actual_vars - set(expected_vars)
+
+    # Create draft
+    draft_id = str(uuid.uuid4())
+    _drafts[draft_id] = {
+        "draft_id": draft_id,
+        "prompt_name": name,
+        "project": project,
+        "merged_from": req.versions,
+        "merged_by_llm": f"{llm_cfg.provider}/{llm_cfg.model_id}",
+        "llm_config_id": llm_cfg.id,
+        "merged_template": merged_template,
+        "expected_variables": expected_vars,
+        "actual_variables": sorted(actual_vars),
+        "missing_variables": sorted(missing),
+        "extra_variables": sorted(extra),
+        "warnings": [],
+    }
+
+    if missing:
+        _drafts[draft_id]["warnings"].append(f"Missing variables: {sorted(missing)}")
+    if extra:
+        _drafts[draft_id]["warnings"].append(f"Extra variables (not in originals): {sorted(extra)}")
+
+    return _drafts[draft_id]
+
+
+@router.get("/drafts/{draft_id}")
+def get_draft(draft_id: str):
+    """Get a merge draft by ID."""
+    draft = _drafts.get(draft_id)
+    if not draft:
+        raise HTTPException(404, "Draft not found or expired")
+    return draft
+
+
+class ApproveDraftRequest(BaseModel):
+    template: Optional[str] = None  # User can edit the merged template before approving
+    commit_message: Optional[str] = None
+
+
+@router.post("/drafts/{draft_id}/approve")
+def approve_draft(
+    draft_id: str,
+    req: ApproveDraftRequest,
+    db: Session = Depends(get_db),
+):
+    """Approve a draft and create a new version of the prompt."""
+    draft = _drafts.get(draft_id)
+    if not draft:
+        raise HTTPException(404, "Draft not found or expired")
+
+    prompt_record = (
+        db.query(PromptRecord)
+        .filter(PromptRecord.project == draft["project"], PromptRecord.name == draft["prompt_name"])
+        .first()
+    )
+    if not prompt_record:
+        raise HTTPException(404, "Prompt not found")
+
+    # Get next version
+    max_version = db.query(func.max(PromptVersionRecord.version)).filter(
+        PromptVersionRecord.prompt_id == prompt_record.id
+    ).scalar() or 0
+
+    # Deactivate all
+    db.query(PromptVersionRecord).filter(
+        PromptVersionRecord.prompt_id == prompt_record.id
+    ).update({"is_active": False})
+
+    # Use edited template if provided
+    final_template = req.template or draft["merged_template"]
+
+    # Create new version
+    version = PromptVersionRecord(
+        id=str(uuid.uuid4()),
+        prompt_id=prompt_record.id,
+        version=max_version + 1,
+        template=final_template,
+        variables=_extract_variables(final_template),
+        is_active=True,
+        commit_message=req.commit_message or f"Merged from versions {draft['merged_from']} using {draft['merged_by_llm']}",
+        created_by="merge-ai",
+        metadata_json={
+            "merged_from": draft["merged_from"],
+            "merged_by_llm": draft["merged_by_llm"],
+        },
+    )
+    db.add(version)
+    db.commit()
+    db.refresh(version)
+
+    # Remove draft
+    _drafts.pop(draft_id, None)
+
+    return _version_to_dict(version)
+
+
+@router.delete("/drafts/{draft_id}")
+def discard_draft(draft_id: str):
+    """Discard a draft."""
+    if draft_id in _drafts:
+        del _drafts[draft_id]
+    return {"status": "discarded"}

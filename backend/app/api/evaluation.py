@@ -510,6 +510,7 @@ class MultiLLMEvalRequest(BaseModel):
     metrics: list[str] = ["faithfulness", "answer_relevancy"]
     judge_llm_config_ids: list[str] = []  # List of LLM config IDs to evaluate with
     ground_truth: Optional[str] = None
+    dataset_name: Optional[str] = None  # Pick GT from a saved dataset (auto-match by question)
 
 
 @router.post("/run-multi-llm")
@@ -522,16 +523,27 @@ def run_multi_llm_evaluation(req: MultiLLMEvalRequest, db: Session = Depends(get
     if not trace:
         raise HTTPException(status_code=404, detail="Trace not found")
 
-    # Ground truth
-    ground_truth = req.ground_truth or trace.ground_truth
-    if not ground_truth and trace.query:
-        gt_record = (
-            db.query(GroundTruthRecord)
-            .filter(GroundTruthRecord.question == trace.query)
-            .first()
-        )
-        if gt_record:
-            ground_truth = gt_record.ground_truth
+    # Ground truth — resolution priority:
+    # 1. Explicit text in req.ground_truth
+    # 2. Semantic match in specified dataset (using embeddings)
+    # 3. Existing trace.ground_truth
+    ground_truth = req.ground_truth
+    if not ground_truth and req.dataset_name and trace.query:
+        try:
+            from app.api.resources import match_ground_truth_semantic
+            match_result = match_ground_truth_semantic(
+                query=trace.query,
+                dataset_name=req.dataset_name,
+                project=trace.project,
+                db=db,
+            )
+            if match_result.get("found") and match_result.get("match"):
+                ground_truth = match_result["match"]["ground_truth"]
+                logger.info(f"Semantic GT match: '{trace.query[:40]}' -> '{match_result['match']['question'][:40]}' (score: {match_result.get('score')})")
+        except Exception as e:
+            logger.warning(f"Semantic match failed: {e}")
+    if not ground_truth:
+        ground_truth = trace.ground_truth
 
     # Get LLM configs
     llm_configs = []

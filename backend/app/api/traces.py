@@ -139,6 +139,24 @@ def create_trace(trace_data: TraceCreate, db: Session = Depends(get_db)):
 
     db.commit()
 
+    # Background: check budget alerts (non-blocking)
+    try:
+        import threading
+        from app.api.alerts import check_budget_alerts
+        from app.db.database import SessionLocal
+
+        def _check_budgets():
+            try:
+                bg_db = SessionLocal()
+                check_budget_alerts(trace_data.project, bg_db)
+                bg_db.close()
+            except Exception:
+                pass
+
+        threading.Thread(target=_check_budgets, daemon=True).start()
+    except Exception:
+        pass
+
     # Auto-eval: if eval_metrics provided, run evaluation synchronously
     eval_result = None
     if trace_data.eval_metrics and trace_data.eval_status == "pending":

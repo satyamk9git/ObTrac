@@ -116,6 +116,49 @@ class LLMConfigRecord(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class BudgetRecord(Base):
+    __tablename__ = "budgets"
+
+    id = Column(String, primary_key=True)
+    project = Column(String, index=True, default="default")
+    name = Column(String, default="Default Budget")
+    period = Column(String, default="monthly")  # daily, weekly, monthly
+    amount_usd = Column(Float, default=100.0)
+    alert_thresholds = Column(JSON, default=lambda: [50, 80, 100])  # percent thresholds
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class AlertChannelRecord(Base):
+    __tablename__ = "alert_channels"
+
+    id = Column(String, primary_key=True)
+    name = Column(String, default="")
+    channel_type = Column(String, default="webhook")  # webhook, slack, email
+    config = Column(JSON, default=dict)  # {"url": "...", "headers": {}}
+    is_active = Column(Boolean, default=True)
+    project = Column(String, default="all")  # "all" or specific project
+    triggers = Column(JSON, default=list)  # list of event types: budget_50, budget_80, budget_100, metric_low, error_spike
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class AlertHistoryRecord(Base):
+    __tablename__ = "alert_history"
+
+    id = Column(String, primary_key=True)
+    channel_id = Column(String, ForeignKey("alert_channels.id"), index=True)
+    project = Column(String, index=True, default="default")
+    event_type = Column(String, default="")  # budget_50, budget_100, metric_low, etc.
+    severity = Column(String, default="info")  # info, warning, critical
+    message = Column(Text, default="")
+    payload = Column(JSON, default=dict)
+    delivered = Column(Boolean, default=False)
+    response_status = Column(Integer, nullable=True)
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class PromptRecord(Base):
     __tablename__ = "prompts"
 
@@ -144,6 +187,7 @@ class PromptVersionRecord(Base):
     is_active = Column(Boolean, default=False)  # only one version active at a time
     commit_message = Column(Text, default="")
     created_by = Column(String, default="")
+    metadata_json = Column(JSON, default=dict)  # e.g. {"merged_from": [2, 3], "merged_by_llm": "gpt-4o"}
     created_at = Column(DateTime, default=datetime.utcnow)
 
     prompt = relationship("PromptRecord", back_populates="versions")

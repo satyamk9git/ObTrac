@@ -3,6 +3,7 @@
 import { useEffect, useState, Suspense } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import SpanTree from "@/components/SpanTree";
+import MetricExplainModal from "@/components/MetricExplainModal";
 
 const API = "http://localhost:8100/api/v1";
 
@@ -29,6 +30,14 @@ function TraceDetailContent() {
   const [annoRating, setAnnoRating] = useState("");
   const [annoLabel, setAnnoLabel] = useState("");
   const [annoNotes, setAnnoNotes] = useState("");
+  // Metric explanation modal
+  const [explainMetric, setExplainMetric] = useState<{ metric: string; score: number; name?: string } | null>(null);
+  // Ground truth datasets
+  const [datasets, setDatasets] = useState<any[]>([]);
+  const [selectedDataset, setSelectedDataset] = useState("");
+  const [matchPreview, setMatchPreview] = useState<any>(null);
+  const [matchingPreview, setMatchingPreview] = useState(false);
+  const [gtSource, setGtSource] = useState<"manual" | "dataset">("manual");
 
   useEffect(() => {
     if (!traceId) return;
@@ -43,6 +52,18 @@ function TraceDetailContent() {
       fetch(`${API}/llm-configs`).then((r) => r.json()),
       fetch(`${API}/annotations/trace/${traceId}`).then((r) => r.json()).catch(() => ({ annotations: [] })),
     ])
+      .then(async (results) => {
+        // After main fetch, also load datasets for this trace's project
+        const t = results[0];
+        if (t?.project) {
+          try {
+            const dsRes = await fetch(`${API}/resources/ground-truth/datasets?project=${encodeURIComponent(t.project)}`);
+            const ds = await dsRes.json();
+            setDatasets(ds.datasets || []);
+          } catch {}
+        }
+        return results;
+      })
       .then(([t, info, configs, annos]) => {
         setTrace(t);
         setMetricsInfo(info);
@@ -59,6 +80,21 @@ function TraceDetailContent() {
       })
       .finally(() => setLoading(false));
   }, [traceId]);
+
+  // When dataset selected, semantically match against trace query
+  useEffect(() => {
+    if (!selectedDataset || !trace?.project || !trace?.query) {
+      setMatchPreview(null);
+      return;
+    }
+    setMatchingPreview(true);
+    setMatchPreview(null);
+    fetch(`${API}/resources/ground-truth/match?query=${encodeURIComponent(trace.query)}&dataset_name=${encodeURIComponent(selectedDataset)}&project=${encodeURIComponent(trace.project)}`)
+      .then(r => r.json())
+      .then(d => setMatchPreview(d))
+      .catch(() => setMatchPreview(null))
+      .finally(() => setMatchingPreview(false));
+  }, [selectedDataset, trace?.project, trace?.query]);
 
   // Timer effect
   useEffect(() => {
@@ -81,7 +117,8 @@ function TraceDetailContent() {
           trace_id: traceId,
           metrics: selectedMetrics,
           judge_llm_config_ids: selectedLLMs,
-          ground_truth: groundTruth || null,
+          ground_truth: gtSource === "manual" ? (groundTruth || null) : null,
+          dataset_name: gtSource === "dataset" ? (selectedDataset || null) : null,
         }),
       });
       const data = await res.json();
@@ -309,13 +346,18 @@ function TraceDetailContent() {
       {trace.metrics && Object.keys(trace.metrics).length > 0 && (
         <div className="mb-6">
           <h2 className="text-lg font-semibold text-gray-800 mb-3">Current Metrics</h2>
+          <p className="text-xs text-gray-500 mb-2">Click any metric to see why and how to improve</p>
           <div className="grid grid-cols-3 gap-4">
             {Object.entries(trace.metrics).map(([name, value]) => {
               const mi = info[name];
               const v = value as number;
               const threshold = mi?.threshold || 0.7;
               return (
-                <div key={name} className="metric-card">
+                <button
+                  key={name}
+                  onClick={() => setExplainMetric({ metric: name, score: v, name: mi?.name || name })}
+                  className="metric-card text-left hover:border-indigo-400 hover:shadow-md transition-all cursor-pointer"
+                >
                   <div className="flex justify-between items-start mb-1">
                     <div>
                       <h3 className="text-sm font-medium text-gray-700">{mi?.name || name}</h3>
@@ -334,11 +376,23 @@ function TraceDetailContent() {
                     />
                   </div>
                   <p className="text-xs text-gray-500 mt-1">{mi?.description || ""}</p>
-                </div>
+                  <p className="text-[10px] text-indigo-500 mt-1">Click to analyze →</p>
+                </button>
               );
             })}
           </div>
         </div>
+      )}
+
+      {/* Explain Modal */}
+      {explainMetric && (
+        <MetricExplainModal
+          traceId={traceId}
+          metric={explainMetric.metric}
+          score={explainMetric.score}
+          metricName={explainMetric.name}
+          onClose={() => setExplainMetric(null)}
+        />
       )}
 
       {/* Existing Suggestions */}
@@ -436,15 +490,88 @@ function TraceDetailContent() {
         {/* Step 3: Ground Truth */}
         {selectedMetrics.some((m) => info[m]?.needs_ground_truth) && (
           <div className="mb-5">
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
               Step 3: Ground Truth <span className="text-purple-600">(required for selected metrics)</span>
             </label>
-            <textarea
-              value={groundTruth}
-              onChange={(e) => setGroundTruth(e.target.value)}
-              className="w-full text-sm border rounded-lg px-3 py-2 h-24"
-              placeholder="Enter the expected correct answer, or it will be matched from Resources..."
-            />
+
+            {/* Toggle: Manual vs Dataset */}
+            <div className="flex gap-2 mb-3">
+              <button
+                type="button"
+                onClick={() => setGtSource("manual")}
+                className={`text-xs px-3 py-1.5 rounded-lg border transition-colors ${
+                  gtSource === "manual" ? "bg-indigo-50 border-indigo-300 text-indigo-700 font-medium" : "bg-gray-50 border-gray-200 text-gray-600"
+                }`}
+              >
+                Type Manually
+              </button>
+              <button
+                type="button"
+                onClick={() => setGtSource("dataset")}
+                className={`text-xs px-3 py-1.5 rounded-lg border transition-colors ${
+                  gtSource === "dataset" ? "bg-indigo-50 border-indigo-300 text-indigo-700 font-medium" : "bg-gray-50 border-gray-200 text-gray-600"
+                }`}
+              >
+                Pick from Dataset ({datasets.length})
+              </button>
+            </div>
+
+            {gtSource === "manual" ? (
+              <textarea
+                value={groundTruth}
+                onChange={(e) => setGroundTruth(e.target.value)}
+                className="w-full text-sm border rounded-lg px-3 py-2 h-24"
+                placeholder="Enter the expected correct answer..."
+              />
+            ) : (
+              <div>
+                {datasets.length === 0 ? (
+                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-800">
+                    No datasets in this project. Go to <a href={`/resources?project=${encodeURIComponent(trace.project)}`} className="underline font-medium">Resources</a> to upload or generate one.
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">Dataset (semantic auto-match)</label>
+                      <select
+                        value={selectedDataset}
+                        onChange={(e) => setSelectedDataset(e.target.value)}
+                        className="w-full text-sm border rounded-lg px-3 py-2"
+                      >
+                        <option value="">-- Select a dataset --</option>
+                        {datasets.map((ds: any) => (
+                          <option key={ds.name} value={ds.name}>
+                            {ds.name} ({ds.count} records)
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Semantic match preview */}
+                    {selectedDataset && matchingPreview && (
+                      <div className="text-xs text-gray-500 flex items-center gap-2">
+                        <svg className="animate-spin w-3 h-3" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+                        Finding best match using embeddings...
+                      </div>
+                    )}
+
+                    {matchPreview && matchPreview.found && (
+                      <div className="p-3 bg-green-50 rounded-lg border border-green-200 text-xs space-y-1">
+                        <div className="flex items-center justify-between">
+                          <p className="font-semibold text-green-800">Auto-matched ({matchPreview.match_type})</p>
+                          <span className="text-[10px] bg-green-200 text-green-900 px-2 py-0.5 rounded">
+                            similarity: {(matchPreview.score * 100).toFixed(1)}%
+                          </span>
+                        </div>
+                        <p className="text-gray-600"><strong>Q:</strong> {matchPreview.match.question}</p>
+                        <p className="text-gray-700"><strong>Ground truth:</strong> {matchPreview.match.ground_truth}</p>
+                      </div>
+                    )}
+
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 

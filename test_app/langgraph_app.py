@@ -18,7 +18,7 @@ from langchain_community.chat_models import ChatLiteLLM
 from langgraph.graph import StateGraph, END
 from typing import TypedDict
 
-from obtrac_sdk import obtrac_config, trace, observe
+from obtrac_sdk import obtrac_config, trace, observe, get_prompt
 
 st.set_page_config(page_title="LangGraph + ObTrac", page_icon="🕸️", layout="wide")
 
@@ -78,18 +78,20 @@ def retrieve_node(state: RAGState) -> RAGState:
 @trace(name="lg_generate", span_type="generation", model="gpt-4o",
        cost={"input_token_cost": 0.0025, "output_token_cost": 0.01})
 def generate_node(state: RAGState) -> RAGState:
-    response = llm.invoke(
-        f"Answer based on context only.\n\nContext:\n{state['context']}\n\nQuestion: {state['query']}\n\nAnswer:"
-    )
+    # Fetch the active version of "rag_answer" prompt from ObTrac registry
+    prompt = get_prompt("rag_answer")
+    rendered = prompt.render(context=state["context"], question=state["query"])
+    response = llm.invoke(rendered)
     state["answer"] = response.content
     return state
 
 @trace(name="lg_review", span_type="generation", model="gpt-4o",
        cost={"input_token_cost": 0.0025, "output_token_cost": 0.01})
 def review_node(state: RAGState) -> RAGState:
-    response = llm.invoke(
-        f"Rate this answer 1-10 and give one-line feedback.\n\nQ: {state['query']}\nA: {state['answer']}"
-    )
+    # Fetch the active version of "review_prompt" from ObTrac registry
+    prompt = get_prompt("review_prompt")
+    rendered = prompt.render(question=state["query"], answer=state["answer"])
+    response = llm.invoke(rendered)
     state["review"] = response.content
     return state
 
