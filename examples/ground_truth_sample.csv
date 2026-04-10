@@ -1,0 +1,4 @@
+question,ground_truth,context
+What is RLHF?,RLHF stands for Reinforcement Learning from Human Feedback. It is a technique used to fine-tune language models using human preferences.,Reinforcement Learning from Human Feedback (RLHF) is a machine learning approach where human evaluators provide feedback on model outputs.
+What is RAG?,RAG stands for Retrieval-Augmented Generation. It combines information retrieval with text generation to produce more accurate and grounded responses.,Retrieval-Augmented Generation (RAG) is a technique that enhances LLM responses by retrieving relevant documents from a knowledge base.
+What is a vector database?,A vector database is a database optimized for storing and querying high-dimensional vector embeddings used in similarity search.,Vector databases like FAISS Pinecone and Qdrant store embeddings and enable fast similarity search over large collections of vectors.

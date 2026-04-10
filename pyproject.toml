@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "obtrac-sdk"
+version = "0.1.0"
+description = "ObTrac - RAG Observability & Evaluation SDK"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "requests>=2.31.0",
+    "tiktoken>=0.7.0",
+]
+
+[project.optional-dependencies]
+llm = ["litellm>=1.40.0"]
+eval = ["ragas>=0.4.0", "datasets>=2.19.0"]
+mlflow = ["mlflow>=2.14.0"]
+all = ["litellm>=1.40.0", "ragas>=0.4.0", "datasets>=2.19.0", "mlflow>=2.14.0"]
+
+[tool.setuptools.packages.find]
+include = ["obtrac_sdk*"]

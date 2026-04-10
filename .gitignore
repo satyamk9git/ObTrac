@@ -1,0 +1,67 @@
+# ===== Secrets & Environment =====
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+.venv/
+venv/
+env/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ===== Node =====
+node_modules/
+.next/
+out/
+.npm
+.eslintcache
+*.tsbuildinfo
+next-env.d.ts
+
+# ===== Data & Logs =====
+data/
+*.db
+*.sqlite
+*.sqlite3
+mlruns/
+mlartifacts/
+logs/
+*.log
+
+# ===== IDE =====
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-*
+.project
+.pydevproject
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ===== Claude / AI tools =====
+.claude/
+
+# ===== Streamlit =====
+.streamlit/secrets.toml
+
+# ===== Cache =====
+.cache/
+*.bak
