@@ -49,6 +49,57 @@ This automatically:
 
 ---
 
+## If `obtrac` command is not recognized
+
+If you see `'obtrac' is not recognized as the name of a cmdlet`, Python's Scripts folder isn't in your PATH.
+
+### Quick fix — use `python -m` instead
+
+This works without any PATH changes:
+
+```bash
+python -m obtrac_sdk.cli install
+python -m obtrac_sdk.cli start
+python -m obtrac_sdk.cli status
+python -m obtrac_sdk.cli stop
+python -m obtrac_sdk.cli open
+```
+
+### Permanent fix — add Python Scripts to PATH
+
+**Windows:**
+
+Find your Scripts folder:
+```powershell
+python -c "import sys, os; print(os.path.join(sys.prefix, 'Scripts'))"
+```
+
+Add it to PATH:
+1. Press `Win + R` → type `sysdm.cpl` → Enter
+2. Click **Advanced** → **Environment Variables**
+3. Under "User variables", select **Path** → **Edit**
+4. Click **New** → paste the Scripts folder path
+5. Click OK → **restart your terminal**
+
+Or temporarily for current session:
+```powershell
+$env:Path += ";C:\Users\<YOU>\AppData\Local\Programs\Python\Python314\Scripts"
+```
+
+**Mac/Linux:**
+
+Add to `~/.bashrc` or `~/.zshrc`:
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Then:
+```bash
+source ~/.bashrc
+```
+
+---
+
 ## Alternative: Clone first (if you want to modify the code)
 
 ```bash
@@ -111,14 +162,16 @@ obtrac open
 
 ## CLI Commands
 
-| Command | What it does |
-|---|---|
-| `obtrac install` | Install frontend deps + build (one-time) |
-| `obtrac start` | Start backend + frontend in background |
-| `obtrac stop` | Stop running services |
-| `obtrac status` | Check if services are running |
-| `obtrac open` | Open dashboard in browser |
-| `obtrac --help` | Show help |
+| Command | Or use | What it does |
+|---|---|---|
+| `obtrac install` | `python -m obtrac_sdk.cli install` | Install frontend deps + build |
+| `obtrac start` | `python -m obtrac_sdk.cli start` | Start backend + frontend |
+| `obtrac stop` | `python -m obtrac_sdk.cli stop` | Stop running services |
+| `obtrac status` | `python -m obtrac_sdk.cli status` | Check service status |
+| `obtrac open` | `python -m obtrac_sdk.cli open` | Open dashboard in browser |
+| `obtrac --help` | `python -m obtrac_sdk.cli --help` | Show help |
+
+> **Tip:** If `obtrac` command isn't found, use the `python -m obtrac_sdk.cli ...` form instead. It always works.
 
 ---
 
