@@ -3,21 +3,68 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "obtrac-sdk"
+name = "obtrac"
 version = "0.1.0"
-description = "ObTrac - RAG Observability & Evaluation SDK"
+description = "ObTrac - RAG Observability & Evaluation Framework"
 readme = "README.md"
 requires-python = ">=3.10"
+authors = [
+    { name = "Satyam Verma" }
+]
+license = { text = "MIT" }
+keywords = ["rag", "observability", "llm", "ragas", "tracing", "evaluation"]
 dependencies = [
+    # SDK core
     "requests>=2.31.0",
     "tiktoken>=0.7.0",
+    "python-dotenv>=1.0.0",
+
+    # Backend (FastAPI)
+    "fastapi>=0.111.0",
+    "uvicorn[standard]>=0.30.0",
+    "pydantic>=2.7.0",
+    "pydantic-settings>=2.3.0",
+    "python-multipart>=0.0.9",
+    "sqlalchemy>=2.0.30",
+
+    # LLM & Eval
+    "litellm>=1.40.0",
+    "langchain-community>=0.2.0",
+    "langchain-text-splitters>=0.2.0",
+    "datasets>=2.19.0",
 ]
 
 [project.optional-dependencies]
-llm = ["litellm>=1.40.0"]
-eval = ["ragas>=0.4.0", "datasets>=2.19.0"]
+ragas = ["ragas>=0.4.0", "instructor"]
 mlflow = ["mlflow>=2.14.0"]
-all = ["litellm>=1.40.0", "ragas>=0.4.0", "datasets>=2.19.0", "mlflow>=2.14.0"]
+ui = [
+    "streamlit>=1.35.0",
+    "faiss-cpu>=1.8.0",
+    "sentence-transformers>=3.0.0",
+    "pypdf>=4.0.0",
+]
+agents = [
+    "langgraph>=0.2.0",
+    "langchain-openai>=0.1.0",
+]
+all = [
+    "ragas>=0.4.0",
+    "instructor",
+    "mlflow>=2.14.0",
+    "streamlit>=1.35.0",
+    "faiss-cpu>=1.8.0",
+    "sentence-transformers>=3.0.0",
+    "pypdf>=4.0.0",
+    "langgraph>=0.2.0",
+    "langchain-openai>=0.1.0",
+]
+
+[project.scripts]
+obtrac = "obtrac_sdk.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/satyamk9git/ObTrac"
+Repository = "https://github.com/satyamk9git/ObTrac"
 
 [tool.setuptools.packages.find]
 include = ["obtrac_sdk*"]
