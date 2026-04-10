@@ -28,6 +28,7 @@ class TraceRecord(Base):
     user = Column(String, default="", index=True)
     session_id = Column(String, default="", index=True)
     eval_status = Column(String, default="none")  # none, pending, running, completed, failed
+    prompt_versions_used = Column(JSON, default=list)  # list of {prompt_name, version}
     status = Column(String, default="running")
     start_time = Column(DateTime, default=datetime.utcnow)
     end_time = Column(DateTime, nullable=True)
@@ -113,6 +114,39 @@ class LLMConfigRecord(Base):
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class PromptRecord(Base):
+    __tablename__ = "prompts"
+
+    id = Column(String, primary_key=True)
+    project = Column(String, index=True, default="default")
+    name = Column(String, index=True)  # unique per project
+    description = Column(Text, default="")
+    tags = Column(JSON, default=list)
+    created_by = Column(String, default="")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    versions = relationship("PromptVersionRecord", back_populates="prompt", cascade="all, delete-orphan")
+
+
+class PromptVersionRecord(Base):
+    __tablename__ = "prompt_versions"
+
+    id = Column(String, primary_key=True)
+    prompt_id = Column(String, ForeignKey("prompts.id"), index=True)
+    version = Column(Integer, default=1)
+    template = Column(Text, default="")
+    variables = Column(JSON, default=list)  # auto-extracted from template
+    model = Column(String, nullable=True)
+    temperature = Column(Float, nullable=True)
+    is_active = Column(Boolean, default=False)  # only one version active at a time
+    commit_message = Column(Text, default="")
+    created_by = Column(String, default="")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    prompt = relationship("PromptRecord", back_populates="versions")
 
 
 class AnnotationRecord(Base):

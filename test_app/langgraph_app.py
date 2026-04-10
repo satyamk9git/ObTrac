@@ -26,7 +26,7 @@ config = obtrac_config(
     project="langgraph-agent",
     backend_url="http://localhost:8100",
     user="satyam",
-    auto_eval=True,
+    auto_eval=False,
     session_id=f"lg_{hash(id(st.session_state)) % 100000}",
 )
 

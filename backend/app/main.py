@@ -34,7 +34,7 @@ class NaNSafeJSONResponse(JSONResponse):
 
 from app.core.config import settings
 from app.db.database import init_db
-from app.api import traces, metrics, llm_config, resources, suggestions, evaluation, analytics, sql_editor, compare, annotations, sessions
+from app.api import traces, metrics, llm_config, resources, suggestions, evaluation, analytics, sql_editor, compare, annotations, sessions, prompts
 
 # Configure logging
 logging.basicConfig(
@@ -103,6 +103,7 @@ app.include_router(sql_editor.router, prefix="/api/v1")
 app.include_router(compare.router, prefix="/api/v1")
 app.include_router(annotations.router, prefix="/api/v1")
 app.include_router(sessions.router, prefix="/api/v1")
+app.include_router(prompts.router, prefix="/api/v1")
 
 
 if __name__ == "__main__":

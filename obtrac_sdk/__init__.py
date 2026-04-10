@@ -6,6 +6,7 @@ from obtrac_sdk.decorators import trace, observe
 from obtrac_sdk.context import ObTracContext
 from obtrac_sdk.llm_gateway import LLMGateway
 from obtrac_sdk.config import ObTracConfig, CostConfig, get_config, configure_llm
+from obtrac_sdk.prompts import get_prompt, Prompt, clear_prompt_cache
 
 # Convenience
 log_llm_usage = ObTracContext.log_llm_usage
@@ -61,6 +62,9 @@ __all__ = [
     "trace",
     "observe",
     "log_llm_usage",
+    "get_prompt",
+    "Prompt",
+    "clear_prompt_cache",
     "ObTracConfig",
     "configure_llm",
     "get_config",
