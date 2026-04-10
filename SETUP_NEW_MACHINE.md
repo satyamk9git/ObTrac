@@ -24,7 +24,7 @@ git --version
 ## Install (or upgrade) — 2 commands
 
 ```bash
-pip install --upgrade --force-reinstall "obtrac[all] @ git+https://github.com/satyamk9git/ObTrac.git"
+pip install --upgrade "obtrac[all] @ git+https://github.com/satyamk9git/ObTrac.git"
 obtrac install
 ```
 
@@ -33,10 +33,12 @@ That's it. These two commands work for **every** scenario:
 | Scenario | What happens |
 |---|---|
 | **First time on this machine** | pip installs the SDK + all deps. `obtrac install` clones the repo to `~/.obtrac`, runs `npm install`, builds the frontend. |
-| **Upgrading an existing install** | pip force-reinstalls the SDK to the latest version. `obtrac install` detects `~/.obtrac` is a git repo, runs `git fetch + reset --hard origin/main`, then re-runs `npm install` and rebuilds. **Your `.env` and SQLite database are preserved.** |
+| **Upgrading an existing install** | pip detects the new version in `pyproject.toml` and upgrades only the SDK + any new/changed dependencies (existing packages are left alone). `obtrac install` detects `~/.obtrac` is a git repo, runs `git fetch + reset --hard origin/main`, then re-runs `npm install` and rebuilds. **Your `.env` and SQLite database are preserved.** |
 | **Old non-git folder at `~/.obtrac`** | `obtrac install` automatically backs up `.env` and `obtrac.db` to `~/.obtrac_backup/`, wipes the folder, re-clones fresh, and restores both files. |
 
 > **No manual uninstall needed.** Re-running these two commands always brings you to the latest version while keeping your data.
+>
+> **Why no `--force-reinstall`?** It would re-download and rebuild every dependency (FastAPI, RAGAS, sentence-transformers, etc.) even ones that haven't changed — slow and wasteful. The `--upgrade` flag plus a version bump in `pyproject.toml` is enough for pip to update only what actually changed. If you ever need to truly nuke and reinstall everything, run `pip uninstall obtrac` first, then the install command above.
 
 ---
 
