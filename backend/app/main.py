@@ -4,7 +4,8 @@ ObTrac Backend - FastAPI Application
 
 import math
 import json
-from fastapi import FastAPI
+import traceback
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import logging
@@ -74,6 +75,22 @@ def startup_event():
     logger.info("Initializing ObTrac database...")
     init_db()
     logger.info("ObTrac backend started successfully")
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """Return the actual error type + message in 500 responses so the SDK
+    surfaces a useful warning instead of generic 'Internal Server Error'."""
+    tb = traceback.format_exc()
+    logger.error(f"Unhandled error on {request.method} {request.url.path}:\n{tb}")
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": type(exc).__name__,
+            "message": str(exc),
+            "path": request.url.path,
+        },
+    )
 
 
 @app.get("/")
