@@ -21,35 +21,42 @@ git --version
 
 ---
 
-## Installation (3 commands)
+## Installation (2 commands — no clone needed!)
 
-### Step 1: Clone the repo
-
-```bash
-git clone https://github.com/satyamk9git/ObTrac.git
-cd ObTrac
-```
-
-### Step 2: Install ObTrac (Python deps + CLI command)
+### Step 1: Install ObTrac directly from GitHub
 
 ```bash
-pip install -e .
+pip install git+https://github.com/satyamk9git/ObTrac.git
 ```
 
 This installs:
-- The `obtrac_sdk` Python package (use in your code)
-- All backend dependencies (FastAPI, SQLAlchemy, RAGAS, LiteLLM, etc.)
-- The `obtrac` CLI command (start, stop, status, install)
+- The `obtrac_sdk` Python package
+- All backend dependencies (FastAPI, SQLAlchemy, LiteLLM, etc.)
+- The `obtrac` CLI command
 
-### Step 3: Install frontend + build
+### Step 2: Install frontend + clone project files
 
 ```bash
 obtrac install
 ```
 
-This runs `npm install` and `npm run build` for the dashboard.
+This automatically:
+- Clones the full project to `~/.obtrac/`
+- Runs `npm install` and builds the frontend
+- Sets up the data directory
 
 > **One-time only.** Takes ~2 minutes.
+
+---
+
+## Alternative: Clone first (if you want to modify the code)
+
+```bash
+git clone https://github.com/satyamk9git/ObTrac.git
+cd ObTrac
+pip install -e .
+obtrac install
+```
 
 ---
 

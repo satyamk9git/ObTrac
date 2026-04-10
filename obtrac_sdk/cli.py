@@ -16,13 +16,34 @@ import time
 import argparse
 from pathlib import Path
 
-# Find project root (where pyproject.toml lives)
+GITHUB_REPO = "https://github.com/satyamk9git/ObTrac.git"
+DEFAULT_INSTALL_DIR = Path.home() / ".obtrac"
+
+
 def find_project_root():
+    """Find the project root by looking for pyproject.toml.
+
+    Order of checks:
+    1. SDK installed editable mode → walk up from __file__
+    2. Current working directory has pyproject.toml
+    3. ~/.obtrac (default install location)
+    """
+    # Check if SDK is installed in editable mode (dev install)
     current = Path(__file__).parent
     for _ in range(5):
-        if (current / "pyproject.toml").exists():
+        if (current / "pyproject.toml").exists() and (current / "frontend").exists():
             return current
         current = current.parent
+
+    # Check current working directory
+    cwd = Path.cwd()
+    if (cwd / "pyproject.toml").exists() and (cwd / "frontend").exists():
+        return cwd
+
+    # Check default install location
+    if (DEFAULT_INSTALL_DIR / "pyproject.toml").exists():
+        return DEFAULT_INSTALL_DIR
+
     return None
 
 
@@ -53,15 +74,33 @@ def _check_node():
 
 def cmd_install():
     """Install frontend dependencies and build for production."""
+    global PROJECT_ROOT, BACKEND_DIR, FRONTEND_DIR
     _print_banner()
-
-    if not PROJECT_ROOT:
-        print("Error: Could not find project root. Are you in the ObTrac directory?")
-        sys.exit(1)
 
     if not _check_node():
         print("Error: Node.js not found. Install from https://nodejs.org/")
         sys.exit(1)
+
+    # If project root not found, clone the repo to ~/.obtrac
+    if not PROJECT_ROOT:
+        print(f"Project files not found locally. Cloning to {DEFAULT_INSTALL_DIR}...")
+        try:
+            subprocess.run(
+                ["git", "clone", GITHUB_REPO, str(DEFAULT_INSTALL_DIR)],
+                check=True,
+            )
+        except subprocess.CalledProcessError:
+            print("git clone failed. Make sure git is installed.")
+            sys.exit(1)
+        except FileNotFoundError:
+            print("git not found. Install from https://git-scm.com/")
+            sys.exit(1)
+
+        PROJECT_ROOT = DEFAULT_INSTALL_DIR
+        BACKEND_DIR = PROJECT_ROOT / "backend"
+        FRONTEND_DIR = PROJECT_ROOT / "frontend"
+        print(f"Cloned to {PROJECT_ROOT}")
+        print()
 
     print(f"Project root: {PROJECT_ROOT}")
     print()
@@ -113,7 +152,9 @@ def cmd_start():
     _print_banner()
 
     if not PROJECT_ROOT:
-        print("Error: Could not find project root.")
+        print("Error: ObTrac project files not found.")
+        print()
+        print("Run 'obtrac install' first to download project files.")
         sys.exit(1)
 
     # Check if .env exists
