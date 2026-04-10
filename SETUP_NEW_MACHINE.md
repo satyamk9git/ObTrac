@@ -24,7 +24,7 @@ git --version
 ## Install (or upgrade) — 2 commands
 
 ```bash
-pip install --upgrade --force-reinstall "git+https://github.com/satyamk9git/ObTrac.git#egg=obtrac[all]"
+pip install --upgrade --force-reinstall "obtrac[all] @ git+https://github.com/satyamk9git/ObTrac.git"
 obtrac install
 ```
 
