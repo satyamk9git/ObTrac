@@ -20,9 +20,15 @@ def obtrac_config(
     auto_eval: bool = False,
     default_metrics: list[str] = None,
     cost: dict = None,
+    auto_create_project: bool = True,
 ) -> ObTracConfig:
     """
     Create and set the global ObTrac configuration.
+
+    By default, the project is auto-created on the backend if it doesn't
+    already exist — so it shows up in the dashboard immediately, even
+    before the first trace is logged. Set auto_create_project=False to
+    skip this (e.g. in offline scripts where backend is unreachable).
 
     Usage:
         from obtrac_sdk import obtrac_config, trace, observe
@@ -52,10 +58,26 @@ def obtrac_config(
         cost=cost_config,
     )
     _set_global_config(cfg)
+
+    # Auto-register the project on the backend so it shows in dropdowns
+    # before the first trace is logged. Idempotent and non-blocking on failure.
+    if auto_create_project and project:
+        try:
+            import requests
+            requests.post(
+                f"{backend_url.rstrip('/')}/api/v1/traces/projects",
+                json={"name": project, "description": ""},
+                timeout=2,
+            )
+        except Exception:
+            # Backend down / network issue → silent. Project will still
+            # be created implicitly when the first trace is logged.
+            pass
+
     return cfg
 
 
-__version__ = "0.1.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "obtrac_config",
