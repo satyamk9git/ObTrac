@@ -19,6 +19,18 @@ from datetime import datetime
 from app.db.database import Base
 
 
+class ProjectRecord(Base):
+    """User-created project. Projects can also exist implicitly as the
+    `project` string on traces/prompts/etc — this table just gives the user
+    a way to create a project up-front (before any traces are logged) so
+    it shows in dropdowns and they can attach prompts/datasets to it."""
+    __tablename__ = "projects"
+
+    name = Column(String, primary_key=True)
+    description = Column(Text, default="")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class TraceRecord(Base):
     __tablename__ = "traces"
 

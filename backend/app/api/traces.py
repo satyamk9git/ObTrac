@@ -9,7 +9,7 @@ from typing import Optional
 import uuid
 
 from app.db.database import get_db
-from app.db.models import TraceRecord, SpanRecord
+from app.db.models import TraceRecord, SpanRecord, ProjectRecord
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/traces", tags=["traces"])
@@ -194,12 +194,63 @@ def create_trace(trace_data: TraceCreate, db: Session = Depends(get_db)):
     }
 
 
+class ProjectCreate(BaseModel):
+    name: str
+    description: str = ""
+
+
+@router.post("/projects", status_code=201)
+def create_project(data: ProjectCreate, db: Session = Depends(get_db)):
+    """Create a project up-front so it appears in dropdowns even before
+    any traces are logged. Idempotent — returns existing project if name
+    already exists (either in the projects table or implicitly via traces)."""
+    name = data.name.strip()
+    if not name:
+        raise HTTPException(400, "Project name cannot be empty")
+
+    existing = db.query(ProjectRecord).filter(ProjectRecord.name == name).first()
+    if existing:
+        return {
+            "name": existing.name,
+            "description": existing.description,
+            "created_at": existing.created_at.isoformat(),
+            "already_existed": True,
+        }
+
+    project = ProjectRecord(name=name, description=data.description.strip())
+    db.add(project)
+    db.commit()
+    db.refresh(project)
+
+    return {
+        "name": project.name,
+        "description": project.description,
+        "created_at": project.created_at.isoformat(),
+        "already_existed": False,
+    }
+
+
+@router.delete("/projects/{name}")
+def delete_project(name: str, db: Session = Depends(get_db)):
+    """Delete a user-created project entry. Does NOT delete traces/prompts
+    that reference this project name — only removes it from the explicit
+    projects table."""
+    project = db.query(ProjectRecord).filter(ProjectRecord.name == name).first()
+    if not project:
+        raise HTTPException(404, f"Project '{name}' not found")
+    db.delete(project)
+    db.commit()
+    return {"status": "deleted", "name": name}
+
+
 @router.get("/projects")
 def list_projects(db: Session = Depends(get_db)):
-    """List all projects with rich stats."""
+    """List all projects with rich stats. Merges user-created projects
+    (from the projects table) with projects implicitly derived from traces."""
     from sqlalchemy import func
 
-    projects = (
+    # 1. Projects implicitly derived from trace activity
+    trace_projects = (
         db.query(
             TraceRecord.project,
             func.count(TraceRecord.trace_id).label("count"),
@@ -211,9 +262,8 @@ def list_projects(db: Session = Depends(get_db)):
         .all()
     )
 
-    results = []
-    for p in projects:
-        # Count success/error
+    by_name: dict[str, dict] = {}
+    for p in trace_projects:
         success = db.query(func.count(TraceRecord.trace_id)).filter(
             TraceRecord.project == p.project, TraceRecord.status == "success"
         ).scalar() or 0
@@ -221,7 +271,7 @@ def list_projects(db: Session = Depends(get_db)):
             TraceRecord.project == p.project, TraceRecord.status == "error"
         ).scalar() or 0
 
-        results.append({
+        by_name[p.project] = {
             "name": p.project,
             "count": p.count,
             "success": success,
@@ -229,9 +279,28 @@ def list_projects(db: Session = Depends(get_db)):
             "avg_latency_ms": round(p.avg_latency or 0, 1),
             "total_cost_usd": round(float(p.total_cost or 0), 6),
             "last_activity": p.last_activity.isoformat() if p.last_activity else None,
-        })
+            "user_created": False,
+        }
 
-    return {"projects": results}
+    # 2. User-created projects (may overlap with trace-derived ones)
+    for proj in db.query(ProjectRecord).all():
+        if proj.name in by_name:
+            by_name[proj.name]["user_created"] = True
+            by_name[proj.name]["description"] = proj.description
+        else:
+            by_name[proj.name] = {
+                "name": proj.name,
+                "count": 0,
+                "success": 0,
+                "error": 0,
+                "avg_latency_ms": 0,
+                "total_cost_usd": 0,
+                "last_activity": proj.created_at.isoformat(),
+                "user_created": True,
+                "description": proj.description,
+            }
+
+    return {"projects": list(by_name.values())}
 
 
 @router.get("/search")

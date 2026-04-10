@@ -25,5 +25,8 @@ def get_db():
 
 
 def init_db():
-    from app.db.models import TraceRecord, SpanRecord, LLMConfigRecord, GroundTruthRecord, AnnotationRecord
+    from app.db.models import (
+        ProjectRecord, TraceRecord, SpanRecord, LLMConfigRecord,
+        GroundTruthRecord, AnnotationRecord,
+    )
     Base.metadata.create_all(bind=engine)
