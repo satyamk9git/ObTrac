@@ -73,7 +73,14 @@ def _check_node():
 
 
 def cmd_install():
-    """Install frontend dependencies and build for production."""
+    """Install / update ObTrac project files and frontend dependencies.
+
+    Behavior:
+    - If ~/.obtrac is an existing git repo → `git pull` (preserves .env + DB).
+    - If ~/.obtrac exists but isn't a git repo → back up .env + obtrac.db,
+      wipe, re-clone fresh, restore the backups.
+    - If ~/.obtrac doesn't exist → clone fresh from GitHub.
+    """
     global PROJECT_ROOT, BACKEND_DIR, FRONTEND_DIR
     _print_banner()
 
@@ -81,26 +88,85 @@ def cmd_install():
         print("Error: Node.js not found. Install from https://nodejs.org/")
         sys.exit(1)
 
-    # If project root not found, clone the repo to ~/.obtrac
-    if not PROJECT_ROOT:
-        print(f"Project files not found locally. Cloning to {DEFAULT_INSTALL_DIR}...")
-        try:
-            subprocess.run(
-                ["git", "clone", GITHUB_REPO, str(DEFAULT_INSTALL_DIR)],
-                check=True,
-            )
-        except subprocess.CalledProcessError:
-            print("git clone failed. Make sure git is installed.")
-            sys.exit(1)
-        except FileNotFoundError:
-            print("git not found. Install from https://git-scm.com/")
-            sys.exit(1)
+    # If running from a dev checkout (editable install with pyproject.toml
+    # next to the SDK), skip the clone/update logic — user manages git themselves.
+    dev_checkout = PROJECT_ROOT and PROJECT_ROOT != DEFAULT_INSTALL_DIR
 
-        PROJECT_ROOT = DEFAULT_INSTALL_DIR
+    if not dev_checkout:
+        target = DEFAULT_INSTALL_DIR
+
+        if (target / ".git").exists():
+            # Existing clone → update in place (preserves .env, DB, node_modules)
+            print(f"Updating existing install at {target}...")
+            try:
+                subprocess.run(
+                    ["git", "-C", str(target), "fetch", "--all"],
+                    check=True,
+                )
+                subprocess.run(
+                    ["git", "-C", str(target), "reset", "--hard", "origin/main"],
+                    check=True,
+                )
+                print("Updated to latest main.")
+            except subprocess.CalledProcessError:
+                print("git update failed. Try deleting ~/.obtrac and re-running.")
+                sys.exit(1)
+        elif target.exists():
+            # Folder exists but isn't a git repo → backup, wipe, re-clone, restore
+            import shutil
+            backup_dir = Path.home() / ".obtrac_backup"
+            backup_dir.mkdir(exist_ok=True)
+
+            env_src = target / ".env"
+            db_src = target / "backend" / "data" / "obtrac.db"
+            env_bak = backup_dir / ".env"
+            db_bak = backup_dir / "obtrac.db"
+
+            if env_src.exists():
+                shutil.copy2(env_src, env_bak)
+                print(f"Backed up .env → {env_bak}")
+            if db_src.exists():
+                shutil.copy2(db_src, db_bak)
+                print(f"Backed up DB  → {db_bak}")
+
+            print(f"Removing old install at {target}...")
+            shutil.rmtree(target)
+
+            print(f"Cloning fresh to {target}...")
+            try:
+                subprocess.run(
+                    ["git", "clone", GITHUB_REPO, str(target)],
+                    check=True,
+                )
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                print("git clone failed. Install git from https://git-scm.com/")
+                sys.exit(1)
+
+            if env_bak.exists():
+                shutil.copy2(env_bak, target / ".env")
+                print("Restored .env")
+            if db_bak.exists():
+                (target / "backend" / "data").mkdir(parents=True, exist_ok=True)
+                shutil.copy2(db_bak, target / "backend" / "data" / "obtrac.db")
+                print("Restored DB")
+        else:
+            # First-time install
+            print(f"Cloning ObTrac to {target}...")
+            try:
+                subprocess.run(
+                    ["git", "clone", GITHUB_REPO, str(target)],
+                    check=True,
+                )
+            except subprocess.CalledProcessError:
+                print("git clone failed. Make sure git is installed.")
+                sys.exit(1)
+            except FileNotFoundError:
+                print("git not found. Install from https://git-scm.com/")
+                sys.exit(1)
+
+        PROJECT_ROOT = target
         BACKEND_DIR = PROJECT_ROOT / "backend"
         FRONTEND_DIR = PROJECT_ROOT / "frontend"
-        print(f"Cloned to {PROJECT_ROOT}")
-        print()
 
     print(f"Project root: {PROJECT_ROOT}")
     print()

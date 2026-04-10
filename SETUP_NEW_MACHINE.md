@@ -1,6 +1,6 @@
 # Setup ObTrac on a New Machine
 
-The fastest way to get ObTrac running on a fresh machine.
+The fastest way to get ObTrac running — works for both **fresh installs** and **updating an existing install**.
 
 ---
 
@@ -21,117 +21,22 @@ git --version
 
 ---
 
-## Installation (2 commands — no clone needed!)
-
-### Step 1: Install ObTrac directly from GitHub
+## Install (or upgrade) — 2 commands
 
 ```bash
-pip install git+https://github.com/satyamk9git/ObTrac.git
-```
-
-This installs:
-- The `obtrac_sdk` Python package
-- All backend dependencies (FastAPI, SQLAlchemy, LiteLLM, etc.)
-- The `obtrac` CLI command
-
-### Step 2: Install frontend + clone project files
-
-```bash
+pip install --upgrade --force-reinstall "git+https://github.com/satyamk9git/ObTrac.git#egg=obtrac[all]"
 obtrac install
 ```
 
-This automatically:
-- Clones the full project to `~/.obtrac/`
-- Runs `npm install` and builds the frontend
-- Sets up the data directory
+That's it. These two commands work for **every** scenario:
 
-> **One-time only.** Takes ~2 minutes.
+| Scenario | What happens |
+|---|---|
+| **First time on this machine** | pip installs the SDK + all deps. `obtrac install` clones the repo to `~/.obtrac`, runs `npm install`, builds the frontend. |
+| **Upgrading an existing install** | pip force-reinstalls the SDK to the latest version. `obtrac install` detects `~/.obtrac` is a git repo, runs `git fetch + reset --hard origin/main`, then re-runs `npm install` and rebuilds. **Your `.env` and SQLite database are preserved.** |
+| **Old non-git folder at `~/.obtrac`** | `obtrac install` automatically backs up `.env` and `obtrac.db` to `~/.obtrac_backup/`, wipes the folder, re-clones fresh, and restores both files. |
 
----
-
-## If `obtrac` command is not recognized
-
-If you see `'obtrac' is not recognized as the name of a cmdlet`, Python's Scripts folder isn't in your PATH.
-
-### Quick fix — use `python -m` instead
-
-This works without any PATH changes:
-
-```bash
-python -m obtrac_sdk.cli install
-python -m obtrac_sdk.cli start
-python -m obtrac_sdk.cli status
-python -m obtrac_sdk.cli stop
-python -m obtrac_sdk.cli open
-```
-
-### Permanent fix — add Python Scripts to PATH
-
-**Windows:**
-
-Find your Scripts folder:
-```powershell
-python -c "import sys, os; print(os.path.join(sys.prefix, 'Scripts'))"
-```
-
-Add it to PATH:
-1. Press `Win + R` → type `sysdm.cpl` → Enter
-2. Click **Advanced** → **Environment Variables**
-3. Under "User variables", select **Path** → **Edit**
-4. Click **New** → paste the Scripts folder path
-5. Click OK → **restart your terminal**
-
-Or temporarily for current session:
-```powershell
-$env:Path += ";C:\Users\<YOU>\AppData\Local\Programs\Python\Python314\Scripts"
-```
-
-**Mac/Linux:**
-
-Add to `~/.bashrc` or `~/.zshrc`:
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-```
-
-Then:
-```bash
-source ~/.bashrc
-```
-
----
-
-## Alternative: Clone first (if you want to modify the code)
-
-```bash
-git clone https://github.com/satyamk9git/ObTrac.git
-cd ObTrac
-pip install -e .
-obtrac install
-```
-
----
-
-## Configure your LLM credentials
-
-Create a `.env` file in the project root:
-
-```bash
-# Windows
-copy .env.example .env
-
-# Linux/Mac
-cp .env.example .env
-```
-
-Edit `.env` with your Azure OpenAI credentials:
-
-```env
-AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
-AZURE_OPENAI_MODEL_NAME=gpt-4o
-AZURE_OPENAI_DEPLOYMENT=gpt-4o
-AZURE_OPENAI_API_KEY=your-api-key-here
-AZURE_OPENAI_API_VERSION=2024-12-01-preview
-```
+> **No manual uninstall needed.** Re-running these two commands always brings you to the latest version while keeping your data.
 
 ---
 
@@ -147,10 +52,6 @@ ObTrac is running!
 
   Dashboard:   http://localhost:3100
   Backend API: http://localhost:8100/docs
-
-To stop:    obtrac stop
-To check:   obtrac status
-To open:    obtrac open
 ```
 
 Open the dashboard:
@@ -160,24 +61,74 @@ obtrac open
 
 ---
 
+## First-time only — configure LLM credentials
+
+After `obtrac install`, create a `.env` file at `~/.obtrac/.env`:
+
+```env
+AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
+AZURE_OPENAI_MODEL_NAME=gpt-4o
+AZURE_OPENAI_DEPLOYMENT=gpt-4o
+AZURE_OPENAI_API_KEY=your-api-key-here
+AZURE_OPENAI_API_VERSION=2024-12-01-preview
+```
+
+Or skip the `.env` and add LLMs through the dashboard at **Settings → LLM Config** after starting.
+
+> **On upgrades:** your existing `.env` is preserved automatically — you don't need to redo this step.
+
+---
+
+## If `obtrac` command isn't recognized
+
+Python's Scripts folder isn't on your PATH. Use the module form instead — it always works:
+
+```bash
+python -m obtrac_sdk.cli install
+python -m obtrac_sdk.cli start
+python -m obtrac_sdk.cli stop
+python -m obtrac_sdk.cli status
+python -m obtrac_sdk.cli open
+```
+
+### Permanent fix on Windows
+
+Find your Scripts folder:
+```powershell
+python -c "import sys, os; print(os.path.join(sys.prefix, 'Scripts'))"
+```
+
+Add it to PATH:
+1. `Win + R` → `sysdm.cpl` → Enter
+2. **Advanced** → **Environment Variables**
+3. Under "User variables", select **Path** → **Edit** → **New** → paste the Scripts path
+4. OK → restart your terminal
+
+### On Mac/Linux
+
+Add to `~/.bashrc` or `~/.zshrc`:
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+Then `source ~/.bashrc`.
+
+---
+
 ## CLI Commands
 
 | Command | Or use | What it does |
 |---|---|---|
-| `obtrac install` | `python -m obtrac_sdk.cli install` | Install frontend deps + build |
+| `obtrac install` | `python -m obtrac_sdk.cli install` | Install / update project files + frontend |
 | `obtrac start` | `python -m obtrac_sdk.cli start` | Start backend + frontend |
 | `obtrac stop` | `python -m obtrac_sdk.cli stop` | Stop running services |
 | `obtrac status` | `python -m obtrac_sdk.cli status` | Check service status |
 | `obtrac open` | `python -m obtrac_sdk.cli open` | Open dashboard in browser |
-| `obtrac --help` | `python -m obtrac_sdk.cli --help` | Show help |
-
-> **Tip:** If `obtrac` command isn't found, use the `python -m obtrac_sdk.cli ...` form instead. It always works.
 
 ---
 
-## Test it works
+## Test your install
 
-Create a file `test.py`:
+Create `test.py`:
 
 ```python
 from obtrac_sdk import obtrac_config, trace, observe
@@ -206,176 +157,81 @@ Run it:
 python test.py
 ```
 
-Open http://localhost:3100 → see your trace under `setup-test` project.
+Open http://localhost:3100 → see your trace under the `setup-test` project.
 
 ---
 
-## Optional Features
+## Where things live
 
-Install extra dependencies on demand:
+| What | Path |
+|---|---|
+| Project files | `~/.obtrac/` |
+| `.env` | `~/.obtrac/.env` |
+| SQLite database | `~/.obtrac/backend/data/obtrac.db` |
+| Frontend build | `~/.obtrac/frontend/.next/` |
+| Backups (auto) | `~/.obtrac_backup/` |
+| PID file | `~/.obtrac_pids.json` |
+
+---
+
+## Alternative: Clone first (for code modifications)
+
+If you want to edit ObTrac itself:
 
 ```bash
-# RAGAS evaluation support
-pip install -e ".[ragas]"
-
-# Streamlit test apps (FAISS, sentence-transformers, etc.)
-pip install -e ".[ui]"
-
-# LangGraph + LangChain agents
-pip install -e ".[agents]"
-
-# Everything
+git clone https://github.com/satyamk9git/ObTrac.git
+cd ObTrac
 pip install -e ".[all]"
+obtrac install
 ```
 
----
-
-## Run Test Apps
-
-After `pip install -e ".[ui]"`:
-
-```bash
-# Simple RAG (FAISS + Azure OpenAI)
-streamlit run test_app/app.py --server.port 8501
-
-# Multi-agent
-streamlit run test_app/agent_app.py --server.port 8502
-
-# LangChain
-streamlit run test_app/langchain_app.py --server.port 8503
-
-# LangGraph
-streamlit run test_app/langgraph_app.py --server.port 8504
-
-# Google ADK style
-streamlit run test_app/google_adk_app.py --server.port 8505
-```
-
----
-
-## Project Structure
-
-```
-ObTrac/
-├── obtrac_sdk/                  # Python SDK + CLI
-│   ├── __init__.py
-│   ├── cli.py                   # obtrac command
-│   ├── decorators.py            # @trace, @observe
-│   ├── config.py
-│   └── ...
-│
-├── backend/                     # FastAPI server
-│   ├── app/
-│   │   ├── main.py
-│   │   ├── api/
-│   │   ├── db/
-│   │   └── core/
-│   └── data/                    # SQLite (gitignored)
-│
-├── frontend/                    # Next.js dashboard
-│   ├── src/
-│   │   ├── app/
-│   │   └── components/
-│   └── package.json
-│
-├── test_app/                    # Streamlit examples
-│   ├── app.py
-│   ├── agent_app.py
-│   ├── langchain_app.py
-│   ├── langgraph_app.py
-│   └── google_adk_app.py
-│
-├── examples/                    # Code samples
-│   └── quickstart.py
-│
-├── pyproject.toml               # pip install config
-├── README.md
-├── EXAMPLES.md
-├── SETUP_NEW_MACHINE.md         # This file
-├── .env.example
-└── .gitignore
-```
+In this mode, `obtrac install` skips the clone/update logic and uses your local checkout — you manage updates with `git pull` yourself.
 
 ---
 
 ## Troubleshooting
 
-### `obtrac: command not found`
-
-Make sure pip's bin directory is in your PATH. On Windows, restart your terminal after `pip install -e .`.
-
-Check installation:
-```bash
-pip show obtrac
-```
-
 ### `npm install` fails
+- Ensure Node.js 18+: `node --version`
+- Clear cache: `npm cache clean --force`
+- Delete `~/.obtrac/frontend/node_modules` and re-run `obtrac install`
 
-- Make sure Node.js 18+ is installed: `node --version`
-- Try clearing the cache: `npm cache clean --force`
-- Delete `frontend/node_modules` and `frontend/package-lock.json`, then `obtrac install` again
-
-### `Port 8100 already in use`
-
-Stop any existing ObTrac process:
+### Port 8100 / 3100 already in use
 ```bash
 obtrac stop
 ```
-
-Or kill manually (Windows):
+Then start again. If that doesn't help, kill manually:
 ```bash
-taskkill /F /IM python.exe
+# Windows
+netstat -ano | findstr :8100
+taskkill /PID <pid> /F
 ```
 
-### `.env not loading`
-
-Make sure `.env` is in the **project root** (same folder as `pyproject.toml`), not inside `backend/` or `test_app/`.
+### `.env` not loading
+Make sure it lives at `~/.obtrac/.env` (project root), **not** inside `backend/` or `test_app/`.
 
 ### Auto-eval not working
-
 1. Open http://localhost:3100/llm-config
 2. Add an LLM with **Use for Auto-Evaluation** checked
-3. In your code, set `auto_eval=True` in `obtrac_config()`
+3. In your code: `obtrac_config(..., auto_eval=True)`
 
 ---
 
-## Migrating Existing Data
+## Optional extras
 
-Copy the SQLite database from your old machine:
+The `[all]` extra in the pip command above already pulls in everything:
+RAGAS, MLflow, Streamlit, FAISS, sentence-transformers, LangGraph, LangChain.
 
-```bash
-# Old machine
-cp backend/data/obtrac.db ~/obtrac_backup.db
-
-# Transfer to new machine, then
-mkdir -p ObTrac/backend/data
-cp ~/obtrac_backup.db ObTrac/backend/data/obtrac.db
-```
-
-Restart:
-```bash
-obtrac stop
-obtrac start
-```
+If you want a leaner install, swap `[all]` for one of:
+- `[ragas]` — RAGAS evaluation only
+- `[ui]` — Streamlit + FAISS + sentence-transformers (test apps)
+- `[agents]` — LangGraph + LangChain
+- (no extra) — SDK + backend only
 
 ---
 
-## Production Deployment
+## Next steps
 
-For running ObTrac in production:
-
-1. **PostgreSQL** instead of SQLite — edit `backend/app/db/database.py`
-2. **Gunicorn** for the backend
-3. **Nginx** as reverse proxy
-4. **Docker Compose** — `docker-compose up --build`
-
-See [README.md](README.md#production-deployment) for details.
-
----
-
-## Next Steps
-
-- Read [README.md](README.md) for full feature documentation
-- Read [EXAMPLES.md](EXAMPLES.md) for code examples and edge cases
-- Try the test apps in `test_app/` to see ObTrac in action
-- Build your own pipeline using the SDK!
+- [README.md](README.md) — full feature documentation
+- [EXAMPLES.md](EXAMPLES.md) — code patterns and edge cases
+- `~/.obtrac/test_app/` — Streamlit examples (RAG, agents, LangChain, LangGraph)
