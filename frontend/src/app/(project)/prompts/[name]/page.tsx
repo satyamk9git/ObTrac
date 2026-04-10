@@ -526,13 +526,14 @@ function PromptDetailContent() {
       {tab === "code" && (
         <div className="space-y-4">
           <div className="card">
+            <p className="text-xs text-gray-500 mb-3">
+              Prompts are <strong>globally accessible</strong> — fetch them by name from any project.
+            </p>
             <h3 className="text-sm font-semibold text-gray-700 mb-3">Python SDK Usage</h3>
             <pre className="text-xs font-mono text-green-400 bg-gray-900 p-4 rounded whitespace-pre-wrap">
-{`from obtrac_sdk import obtrac_config, get_prompt
+{`from obtrac_sdk import get_prompt
 
-obtrac_config(project="${project}")
-
-# Fetch latest active version
+# Fetch latest active version (works from any project)
 prompt = get_prompt("${name}")
 
 # Render with variables
@@ -556,13 +557,13 @@ text = prompt.render(${variables.map((v: string) => `${v}="..."`).join(", ")})`}
             <h3 className="text-sm font-semibold text-gray-700 mb-3">REST API</h3>
             <pre className="text-xs font-mono text-green-400 bg-gray-900 p-4 rounded whitespace-pre-wrap">
 {`# Get latest version
-GET ${API}/prompts/${name}/latest?project=${project}
+GET ${API}/prompts/${name}/latest
 
 # Get specific version
-GET ${API}/prompts/${name}/versions/2?project=${project}
+GET ${API}/prompts/${name}/versions/2
 
 # Render with variables
-POST ${API}/prompts/${name}/render?project=${project}
+POST ${API}/prompts/${name}/render
 {
   ${variables.map((v: string) => `"${v}": "..."`).join(",\n  ")}
 }`}

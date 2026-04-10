@@ -29,7 +29,7 @@ class PromptCreate(BaseModel):
     temperature: Optional[float] = None
     commit_message: str = "Initial version"
     created_by: str = ""
-    project: str = "default"
+    project: str = "global"  # legacy — kept for backward compat, but prompts are now global
 
 
 class VersionCreate(BaseModel):
@@ -53,6 +53,17 @@ def _extract_variables(template: str) -> list[str]:
     """Extract {variable} names from a template string."""
     pattern = re.compile(r"\{(\w+)\}")
     return list(set(pattern.findall(template)))
+
+
+def _find_prompt(db: Session, name: str) -> Optional[PromptRecord]:
+    """Find a prompt by name. Prompts are now global — project filter is ignored.
+    Returns the most recently updated prompt with this name (handles legacy duplicates)."""
+    return (
+        db.query(PromptRecord)
+        .filter(PromptRecord.name == name)
+        .order_by(PromptRecord.updated_at.desc())
+        .first()
+    )
 
 
 def _version_to_dict(v: PromptVersionRecord) -> dict:
@@ -104,15 +115,13 @@ def _prompt_to_dict(p: PromptRecord, include_versions: bool = False) -> dict:
 
 @router.get("")
 def list_prompts(
-    project: str = Query("all"),
+    project: str = Query("all"),  # kept for backward compat — ignored, prompts are now global
     tag: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
-    """List all prompts in a project."""
-    query = db.query(PromptRecord)
-    if project != "all":
-        query = query.filter(PromptRecord.project == project)
-    prompts = query.order_by(PromptRecord.updated_at.desc()).all()
+    """List all prompts. Prompts are now globally accessible — the project
+    query parameter is accepted for backward compatibility but ignored."""
+    prompts = db.query(PromptRecord).order_by(PromptRecord.updated_at.desc()).all()
 
     result = [_prompt_to_dict(p) for p in prompts]
     if tag:
@@ -122,18 +131,14 @@ def list_prompts(
 
 @router.post("", status_code=201)
 def create_prompt(data: PromptCreate, db: Session = Depends(get_db)):
-    """Create a new prompt with its first version."""
-    existing = (
-        db.query(PromptRecord)
-        .filter(PromptRecord.project == data.project, PromptRecord.name == data.name)
-        .first()
-    )
+    """Create a new prompt with its first version. Names must be globally unique."""
+    existing = _find_prompt(db, data.name)
     if existing:
-        raise HTTPException(409, f"Prompt '{data.name}' already exists in project '{data.project}'")
+        raise HTTPException(409, f"Prompt '{data.name}' already exists")
 
     prompt = PromptRecord(
         id=str(uuid.uuid4()),
-        project=data.project,
+        project="global",
         name=data.name,
         description=data.description,
         tags=data.tags,
@@ -165,17 +170,13 @@ def create_prompt(data: PromptCreate, db: Session = Depends(get_db)):
 @router.get("/{name}")
 def get_prompt(
     name: str,
-    project: str = Query("default"),
+    project: str = Query("default"),  # accepted but ignored
     db: Session = Depends(get_db),
 ):
-    """Get a prompt with all versions."""
-    prompt = (
-        db.query(PromptRecord)
-        .filter(PromptRecord.project == project, PromptRecord.name == name)
-        .first()
-    )
+    """Get a prompt with all versions. Prompts are global — name is sufficient."""
+    prompt = _find_prompt(db, name)
     if not prompt:
-        raise HTTPException(404, f"Prompt '{name}' not found in project '{project}'")
+        raise HTTPException(404, f"Prompt '{name}' not found")
     return _prompt_to_dict(prompt, include_versions=True)
 
 
@@ -183,15 +184,11 @@ def get_prompt(
 def update_prompt(
     name: str,
     data: PromptUpdate,
-    project: str = Query("default"),
+    project: str = Query("default"),  # accepted but ignored
     db: Session = Depends(get_db),
 ):
     """Update prompt metadata (description, tags)."""
-    prompt = (
-        db.query(PromptRecord)
-        .filter(PromptRecord.project == project, PromptRecord.name == name)
-        .first()
-    )
+    prompt = _find_prompt(db, name)
     if not prompt:
         raise HTTPException(404, "Prompt not found")
 
@@ -205,15 +202,11 @@ def update_prompt(
 @router.delete("/{name}")
 def delete_prompt(
     name: str,
-    project: str = Query("default"),
+    project: str = Query("default"),  # accepted but ignored
     db: Session = Depends(get_db),
 ):
     """Delete a prompt and all its versions."""
-    prompt = (
-        db.query(PromptRecord)
-        .filter(PromptRecord.project == project, PromptRecord.name == name)
-        .first()
-    )
+    prompt = _find_prompt(db, name)
     if not prompt:
         raise HTTPException(404, "Prompt not found")
     db.delete(prompt)
@@ -225,15 +218,11 @@ def delete_prompt(
 def create_version(
     name: str,
     data: VersionCreate,
-    project: str = Query("default"),
+    project: str = Query("default"),  # accepted but ignored
     db: Session = Depends(get_db),
 ):
     """Create a new version of a prompt."""
-    prompt = (
-        db.query(PromptRecord)
-        .filter(PromptRecord.project == project, PromptRecord.name == name)
-        .first()
-    )
+    prompt = _find_prompt(db, name)
     if not prompt:
         raise HTTPException(404, "Prompt not found")
 
@@ -271,15 +260,11 @@ def create_version(
 def get_version(
     name: str,
     version: int,
-    project: str = Query("default"),
+    project: str = Query("default"),  # accepted but ignored
     db: Session = Depends(get_db),
 ):
     """Get a specific version."""
-    prompt = (
-        db.query(PromptRecord)
-        .filter(PromptRecord.project == project, PromptRecord.name == name)
-        .first()
-    )
+    prompt = _find_prompt(db, name)
     if not prompt:
         raise HTTPException(404, "Prompt not found")
 
@@ -296,15 +281,11 @@ def get_version(
 @router.get("/{name}/latest")
 def get_latest_version(
     name: str,
-    project: str = Query("default"),
+    project: str = Query("default"),  # accepted but ignored
     db: Session = Depends(get_db),
 ):
     """Get the active (latest) version of a prompt."""
-    prompt = (
-        db.query(PromptRecord)
-        .filter(PromptRecord.project == project, PromptRecord.name == name)
-        .first()
-    )
+    prompt = _find_prompt(db, name)
     if not prompt:
         raise HTTPException(404, "Prompt not found")
 
@@ -321,15 +302,11 @@ def get_latest_version(
 def activate_version(
     name: str,
     version: int,
-    project: str = Query("default"),
+    project: str = Query("default"),  # accepted but ignored
     db: Session = Depends(get_db),
 ):
     """Mark a specific version as active (the one returned by /latest)."""
-    prompt = (
-        db.query(PromptRecord)
-        .filter(PromptRecord.project == project, PromptRecord.name == name)
-        .first()
-    )
+    prompt = _find_prompt(db, name)
     if not prompt:
         raise HTTPException(404, "Prompt not found")
 
@@ -357,15 +334,11 @@ def render_prompt(
     name: str,
     variables: dict,
     version: Optional[int] = None,
-    project: str = Query("default"),
+    project: str = Query("default"),  # accepted but ignored
     db: Session = Depends(get_db),
 ):
     """Render a prompt template with variables filled in."""
-    prompt = (
-        db.query(PromptRecord)
-        .filter(PromptRecord.project == project, PromptRecord.name == name)
-        .first()
-    )
+    prompt = _find_prompt(db, name)
     if not prompt:
         raise HTTPException(404, "Prompt not found")
 
@@ -433,7 +406,7 @@ class MergeRequest(BaseModel):
 def merge_versions(
     name: str,
     req: MergeRequest,
-    project: str = Query("default"),
+    project: str = Query("default"),  # accepted but ignored
     db: Session = Depends(get_db),
 ):
     """
@@ -443,11 +416,7 @@ def merge_versions(
     if len(req.versions) < 2:
         raise HTTPException(400, "Need at least 2 versions to merge")
 
-    prompt_record = (
-        db.query(PromptRecord)
-        .filter(PromptRecord.project == project, PromptRecord.name == name)
-        .first()
-    )
+    prompt_record = _find_prompt(db, name)
     if not prompt_record:
         raise HTTPException(404, "Prompt not found")
 
@@ -591,11 +560,7 @@ def approve_draft(
     if not draft:
         raise HTTPException(404, "Draft not found or expired")
 
-    prompt_record = (
-        db.query(PromptRecord)
-        .filter(PromptRecord.project == draft["project"], PromptRecord.name == draft["prompt_name"])
-        .first()
-    )
+    prompt_record = _find_prompt(db, draft["prompt_name"])
     if not prompt_record:
         raise HTTPException(404, "Prompt not found")
 

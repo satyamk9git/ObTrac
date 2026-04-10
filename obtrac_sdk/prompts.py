@@ -90,10 +90,13 @@ def get_prompt(name: str, version: Optional[int] = None, project: Optional[str] 
     """
     Fetch a prompt from the ObTrac registry.
 
+    Prompts are global — they're accessible from any project. The `project`
+    argument is accepted for backward compatibility but ignored.
+
     Args:
-        name: Prompt name (unique within a project).
+        name: Prompt name (globally unique).
         version: Specific version to fetch. If None, returns the active (latest) version.
-        project: Project name. Defaults to the project set in obtrac_config().
+        project: Deprecated, accepted but ignored.
 
     Returns:
         A Prompt object with .render(**variables) method.
@@ -105,15 +108,11 @@ def get_prompt(name: str, version: Optional[int] = None, project: Optional[str] 
 
         # Specific version
         prompt = get_prompt("rag_answer", version=2)
-
-        # From a different project
-        prompt = get_prompt("classifier", project="other-project")
     """
     cfg = get_config()
-    project = project or cfg.project
     backend_url = cfg.backend_url
 
-    cache_key = (project, name, version or "latest")
+    cache_key = ("global", name, version or "latest")
     now = time.time()
 
     # Check cache
@@ -125,13 +124,13 @@ def get_prompt(name: str, version: Optional[int] = None, project: Optional[str] 
     # Fetch from backend
     try:
         if version is not None:
-            url = f"{backend_url}/api/v1/prompts/{name}/versions/{version}?project={project}"
+            url = f"{backend_url}/api/v1/prompts/{name}/versions/{version}"
         else:
-            url = f"{backend_url}/api/v1/prompts/{name}/latest?project={project}"
+            url = f"{backend_url}/api/v1/prompts/{name}/latest"
 
         resp = requests.get(url, timeout=10)
         if resp.status_code == 404:
-            raise ValueError(f"Prompt '{name}' (version={version or 'latest'}) not found in project '{project}'")
+            raise ValueError(f"Prompt '{name}' (version={version or 'latest'}) not found")
         resp.raise_for_status()
         data = resp.json()
 

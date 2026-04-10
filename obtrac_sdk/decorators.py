@@ -455,8 +455,16 @@ def observe(
                         if resp.ok:
                             result = resp.json()
                             logger.info(f"Trace stored: {result.get('trace_id', '')[:12]} eval={result.get('eval_status', 'none')}")
+                        else:
+                            logger.warning(
+                                f"ObTrac backend rejected trace (HTTP {resp.status_code}) at "
+                                f"{cfg.backend_url}/api/v1/traces — body: {resp.text[:300]}"
+                            )
                     except Exception as e:
-                        logger.debug(f"Backend send failed: {e}")
+                        logger.warning(
+                            f"ObTrac backend send failed at {cfg.backend_url}/api/v1/traces: "
+                            f"{type(e).__name__}: {e}"
+                        )
 
                 thread = threading.Thread(
                     target=_post_process,
@@ -509,13 +517,21 @@ def _send_to_backend(backend_url: str, trace_obj: Trace):
 
     def _send():
         try:
-            requests.post(
+            resp = requests.post(
                 f"{backend_url}/api/v1/traces",
                 json=trace_obj.to_dict(),
                 timeout=10,
             )
+            if not resp.ok:
+                logger.warning(
+                    f"ObTrac backend rejected trace (HTTP {resp.status_code}) at "
+                    f"{backend_url}/api/v1/traces — body: {resp.text[:300]}"
+                )
         except Exception as e:
-            logger.debug(f"Failed to send trace to backend: {e}")
+            logger.warning(
+                f"ObTrac backend send failed at {backend_url}/api/v1/traces: "
+                f"{type(e).__name__}: {e}"
+            )
 
     thread = threading.Thread(target=_send, daemon=True)
     thread.start()

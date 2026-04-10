@@ -22,14 +22,14 @@ function PromptsContent() {
 
   const fetchPrompts = () => {
     setLoading(true);
-    fetch(`${API}/prompts?project=${encodeURIComponent(project)}`)
+    fetch(`${API}/prompts`)
       .then(r => r.json())
       .then(d => setPrompts(d.prompts || []))
       .catch(() => setPrompts([]))
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => { fetchPrompts(); }, [project]);
+  useEffect(() => { fetchPrompts(); }, []);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,7 +42,6 @@ function PromptsContent() {
         tags: newTags.split(",").map(t => t.trim()).filter(Boolean),
         template: newTemplate,
         commit_message: newCommit,
-        project,
         created_by: "satyam",
       }),
     });
@@ -58,7 +57,7 @@ function PromptsContent() {
 
   const handleDelete = async (name: string) => {
     if (!confirm(`Delete prompt '${name}'?`)) return;
-    await fetch(`${API}/prompts/${name}?project=${encodeURIComponent(project)}`, { method: "DELETE" });
+    await fetch(`${API}/prompts/${name}`, { method: "DELETE" });
     fetchPrompts();
   };
 
@@ -67,7 +66,7 @@ function PromptsContent() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Prompts</h1>
-          <p className="text-sm text-gray-500">{prompts.length} prompts in {project}</p>
+          <p className="text-sm text-gray-500">{prompts.length} prompt{prompts.length !== 1 ? "s" : ""} — globally accessible across all projects</p>
         </div>
         <button onClick={() => setShowForm(!showForm)} className="btn-primary">
           {showForm ? "Cancel" : "+ New Prompt"}
@@ -132,7 +131,7 @@ text = prompt.render(question="...", context="...")`}
             <div key={p.id} className="card hover:border-indigo-300 transition-colors">
               <div className="flex items-start justify-between mb-2">
                 <div className="flex-1">
-                  <Link href={`/prompts/${p.name}?project=${encodeURIComponent(project)}`}
+                  <Link href={`/prompts/${p.name}`}
                     className="text-base font-semibold text-gray-900 hover:text-indigo-600">
                     {p.name}
                   </Link>
