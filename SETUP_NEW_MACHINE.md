@@ -37,7 +37,7 @@ If any of those fail, install from:
 ### Latest (v0.6.1)
 
 ```bash
-pip install "obtrac[all] @ git+https://github.com/satyamk9git/ObTrac.git@v0.6.3"
+pip install "obtrac[all] @ git+https://github.com/satyamk9git/ObTrac.git@v0.6.4"
 python -m obtrac_sdk.cli install
 python -m obtrac_sdk.cli start
 ```
@@ -89,7 +89,7 @@ Whether you're upgrading **v0.4.1 → v0.6.1** or any other tag swap, the flow i
 
 ```bash
 python -m obtrac_sdk.cli stop
-pip install --upgrade --force-reinstall "obtrac[all] @ git+https://github.com/satyamk9git/ObTrac.git@v0.6.3"
+pip install --upgrade --force-reinstall "obtrac[all] @ git+https://github.com/satyamk9git/ObTrac.git@v0.6.4"
 python -m obtrac_sdk.cli install
 python -m obtrac_sdk.cli start
 ```
@@ -282,7 +282,7 @@ Then re-run your script. (On Windows: `for /d /r . %d in (__pycache__) do @rd /s
 ### Pip says "Requirement already satisfied" but the version is wrong
 Use `--force-reinstall`:
 ```bash
-pip install --upgrade --force-reinstall "obtrac[all] @ git+https://github.com/satyamk9git/ObTrac.git@v0.6.3"
+pip install --upgrade --force-reinstall "obtrac[all] @ git+https://github.com/satyamk9git/ObTrac.git@v0.6.4"
 ```
 
 ---

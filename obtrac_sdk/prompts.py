@@ -1,6 +1,9 @@
 """
 Prompt registry client — fetch versioned prompts from the ObTrac backend.
 
+Variable syntax: use double curly braces — {{varname}}.
+Single curly braces and JSON-like content are passed through as literal text.
+
 Usage:
     from obtrac_sdk import get_prompt
 
@@ -13,6 +16,7 @@ Usage:
 """
 
 import logging
+import re
 import time
 from typing import Optional
 
@@ -27,9 +31,48 @@ logger = logging.getLogger("obtrac")
 _cache: dict = {}
 _CACHE_TTL = 60  # seconds
 
+# Variable placeholder regex — only matches {{identifier}} where identifier
+# is a valid Python-style identifier (letters, digits, underscores).
+# This is intentionally strict so JSON like {"key": "value"} is left alone.
+_VAR_PATTERN = re.compile(r"\{\{(\w+)\}\}")
+
+
+def _render_template(template: str, kwargs: dict, prompt_name: str, version: int, declared_variables: list) -> str:
+    """
+    Substitute {{varname}} placeholders with values from kwargs.
+
+    Single { and } characters are passed through as literal text — no escaping
+    needed. JSON examples in templates work without modification.
+
+    Raises KeyError if the template references a variable that wasn't passed.
+    """
+    missing: list[str] = []
+
+    def replace(match: re.Match) -> str:
+        var = match.group(1)
+        if var in kwargs:
+            return str(kwargs[var])
+        missing.append(var)
+        return match.group(0)  # leave it as-is for the error message
+
+    rendered = _VAR_PATTERN.sub(replace, template)
+
+    if missing:
+        unique_missing = sorted(set(missing))
+        raise KeyError(
+            f"Missing variable(s) {unique_missing} for prompt '{prompt_name}' v{version}. "
+            f"Required: {declared_variables}"
+        )
+
+    return rendered
+
 
 class Prompt:
-    """A prompt template fetched from the registry."""
+    """A prompt template fetched from the registry.
+
+    Use {{varname}} syntax for variables. Single { and } are literal characters,
+    so you can paste JSON examples into your prompts without any escaping.
+    """
 
     def __init__(self, name: str, version: int, template: str, variables: list,
                  model: Optional[str] = None, temperature: Optional[float] = None,
@@ -44,7 +87,7 @@ class Prompt:
 
     def render(self, **kwargs) -> str:
         """
-        Render the template with variable substitution.
+        Render the template by substituting {{varname}} placeholders.
 
         Records the prompt name + version on the current span (if any)
         so that traces are linked to the prompts they used.
@@ -52,14 +95,16 @@ class Prompt:
         Example:
             prompt = get_prompt("rag_answer")
             text = prompt.render(question="What is RAG?", context="...")
+
+        Template syntax:
+            {{question}}              → substituted with kwargs["question"]
+            {"key": "value"}          → literal JSON, passed through unchanged
+            { anything that's not    → literal, passed through unchanged
+              a valid identifier }
         """
-        try:
-            rendered = self.template.format(**kwargs)
-        except KeyError as e:
-            raise KeyError(
-                f"Missing variable {e} for prompt '{self.name}' v{self.version}. "
-                f"Required: {self.variables}"
-            )
+        rendered = _render_template(
+            self.template, kwargs, self.name, self.version, self.variables
+        )
 
         # Track usage on the current trace
         try:

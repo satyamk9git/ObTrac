@@ -4,6 +4,46 @@ All notable changes to ObTrac. Format roughly follows [Keep a Changelog](https:/
 
 ---
 
+## [v0.6.4] — Mustache-style prompt syntax: `{{var}}` placeholders, raw JSON in templates
+
+**Tag:** `v0.6.4`
+**Install:** `pip install "obtrac[all] @ git+https://github.com/satyamk9git/ObTrac.git@v0.6.4"`
+
+**Breaking change for prompt templates.** Variable placeholders now use **double curly braces** (`{{varname}}`) instead of single braces (`{varname}`). Single `{` and `}` are always literal characters. This means you can paste raw JSON examples into prompts without any escaping.
+
+### Why this change
+
+Before v0.6.4, ObTrac used Python's `str.format()` for variable substitution. This treats `{` and `}` as variable delimiters, so any literal brace in the template (e.g. a JSON example like `Return: {"answer": "..."}`) had to be escaped as `{{` and `}}`. The dashboard validator added in v0.6.3 caught the most common mistakes, but the underlying ergonomics were still bad — anyone writing a prompt that asks the LLM to return JSON had to remember the escape rules.
+
+v0.6.4 switches to **Mustache-style placeholders**: `{{varname}}` is the only way to mark a variable, and single `{` / `}` are always literal characters. This matches the convention used by Mustache, Handlebars, Jinja2, and most modern templating engines.
+
+### Migration
+
+**Existing prompts in the database use the old `{var}` syntax and will silently stop substituting variables in v0.6.4+.** They won't crash — the renderer just won't recognize the single-brace placeholders. To migrate, edit each prompt and replace `{var}` with `{{var}}` for every variable.
+
+The dashboard validator will show a yellow warning if it detects single-brace placeholders, so you can spot which prompts need to be updated:
+
+> *Found single-brace placeholders that look like the old syntax: `{question}`, `{context}`. In v0.6.4+ these are treated as literal text — use `{{varname}}` (double braces) instead. If these are meant to be literal characters, ignore this warning.*
+
+There's no automated migration because the same `{name}` syntax could legitimately mean either "a variable" or "literal text" — only the user knows which.
+
+### Changed
+- **`obtrac_sdk/prompts.py`** — `Prompt.render()` now uses a regex (`re.compile(r"\{\{(\w+)\}\}")`) instead of `str.format()`. Substitutes `{{varname}}` patterns where `varname` is a Python identifier. Everything else is left alone.
+- **`backend/app/api/prompts.py`** — `_extract_variables()`, `_validate_template()`, and the `/render` endpoint all updated to use the new syntax. Single-brace patterns trigger a yellow warning instead of being treated as variables.
+- **`MERGE_SYSTEM_PROMPT`** — instructs the merge LLM to output `{{varname}}` style placeholders so AI-generated merged prompts follow the new convention. Uses `__SINGLE_OPEN__` / `__DOUBLE_OPEN__` placeholder markers internally to keep the rules text readable in code.
+- **Frontend prompt forms** — helper text now reads *"Use `{{var}}` for variables. Single `{`/`}` are literal — paste raw JSON freely."* Variable chips in the validator green-checkmark display now show `{{var}}` style.
+- **Test/Render tab** on the prompt detail page — variable input labels now show `{{varname}}`.
+- **EXAMPLES.md section 11** — fully rewritten to teach the new syntax. Includes a comparison table to other templating systems and migration instructions.
+
+### Added
+- **Legacy syntax detection warning** — the validator checks for `{varname}` patterns (single brace, no escape) and warns the user that those are now treated as literal text. Soft warning, doesn't block save.
+
+### What's NOT changed
+- Existing prompts in the database are untouched. They'll show the warning when you open them in the editor, but they won't crash anything — the renderer just leaves their `{var}` placeholders as literal text.
+- The SDK API is unchanged. `prompt.render(question="...", context="...")` works the same way for both syntaxes — only the template syntax inside the prompt itself is different.
+
+---
+
 ## [v0.6.3] — Prompt template validation
 
 **Tag:** `v0.6.3`

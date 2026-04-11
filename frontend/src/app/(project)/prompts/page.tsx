@@ -139,11 +139,11 @@ function PromptsContent() {
           </div>
           <div>
             <label className="block text-xs text-gray-600 mb-1">
-              Template — use {`{variable}`} for variables.{" "}
-              <span className="text-gray-400">For literal curly braces (e.g. JSON), escape as <code className="text-indigo-600">{`{{`}</code> and <code className="text-indigo-600">{`}}`}</code></span>
+              Template — use <code className="text-indigo-600">{`{{variable}}`}</code> for variables.{" "}
+              <span className="text-gray-400">Single <code>{`{`}</code> and <code>{`}`}</code> are literal — paste raw JSON freely.</span>
             </label>
             <textarea value={newTemplate} onChange={e => setNewTemplate(e.target.value)} required rows={6}
-              className="input-dark font-mono text-xs" placeholder="You are a helpful assistant.&#10;&#10;Context: {context}&#10;&#10;Question: {question}&#10;&#10;Answer:" />
+              className="input-dark font-mono text-xs" placeholder={`You are a helpful assistant. Return your answer as JSON in this format:\n{\n  "answer": "...",\n  "confidence": 0.9\n}\n\nContext: {{context}}\nQuestion: {{question}}\nAnswer:`} />
 
             {/* Live validation panel */}
             {validation && (
@@ -188,7 +188,7 @@ function PromptsContent() {
                     <span className="font-semibold text-green-700">✓ Template valid.</span>{" "}
                     Detected variables:{" "}
                     {validation.variables.map((v, i) => (
-                      <code key={v} className="text-indigo-600 mx-0.5">{`{${v}}`}</code>
+                      <code key={v} className="text-indigo-600 mx-0.5">{`{{${v}}}`}</code>
                     ))}
                   </div>
                 )}

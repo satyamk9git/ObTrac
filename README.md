@@ -29,7 +29,7 @@
 
 | Latest stable | Long-term stable |
 |---|---|
-| **v0.6.3** — sidebar restructure, embedder config, async eval, AI insights, Excel filters, budget→alert mapping, prompt template validator | **v0.4.1-stable** — original known-good baseline |
+| **v0.6.4** — sidebar restructure, embedder config, async eval, AI insights, Excel filters, budget→alert mapping, Mustache-style `{{var}}` prompts | **v0.4.1-stable** — original known-good baseline |
 
 ---
 
@@ -86,7 +86,7 @@ ObTrac is **3 things in one**:
 ### Latest stable (v0.6.1) — recommended
 
 ```bash
-pip install "obtrac[all] @ git+https://github.com/satyamk9git/ObTrac.git@v0.6.3"
+pip install "obtrac[all] @ git+https://github.com/satyamk9git/ObTrac.git@v0.6.4"
 python -m obtrac_sdk.cli install
 python -m obtrac_sdk.cli start
 python -m obtrac_sdk.cli open
@@ -110,7 +110,7 @@ ObTrac maintains **two named tags** for installation. They're independent and yo
 
 | Tag | Install command | When to use |
 |---|---|---|
-| **`v0.6.1`** | `pip install "obtrac[all] @ git+https://github.com/satyamk9git/ObTrac.git@v0.6.3"` | All the latest features. Recommended for new installs and dev environments. |
+| **`v0.6.1`** | `pip install "obtrac[all] @ git+https://github.com/satyamk9git/ObTrac.git@v0.6.4"` | All the latest features. Recommended for new installs and dev environments. |
 | **`v0.4.1-stable`** | `pip install "obtrac[all] @ git+https://github.com/satyamk9git/ObTrac.git@v0.4.1-stable"` | Original known-good baseline. Use this when you need a frozen pre-v0.6 version (e.g., CI pinning, regression testing, or rollback after a v0.6.x issue). |
 
 **The `@<tag>` part is critical.** Without it, pip pulls whatever's on the default branch. With it, pip pulls *exactly* that immutable named commit.
@@ -451,7 +451,7 @@ If `obtrac` is not found on PATH after install, use `python -m obtrac_sdk.cli ..
 
 ```bash
 python -m obtrac_sdk.cli stop
-pip install --upgrade --force-reinstall "obtrac[all] @ git+https://github.com/satyamk9git/ObTrac.git@v0.6.3"
+pip install --upgrade --force-reinstall "obtrac[all] @ git+https://github.com/satyamk9git/ObTrac.git@v0.6.4"
 python -m obtrac_sdk.cli install
 python -m obtrac_sdk.cli start
 ```

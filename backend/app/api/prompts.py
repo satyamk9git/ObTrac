@@ -49,18 +49,38 @@ class PromptUpdate(BaseModel):
 # Helpers
 # ========================================
 
+# Variable placeholder regex — matches {{identifier}} only.
+# Single { and } are always literal characters in this template syntax.
+_VAR_PATTERN = re.compile(r"\{\{(\w+)\}\}")
+
+# Catch the legacy single-brace style so we can warn users that it's no longer supported
+_LEGACY_VAR_PATTERN = re.compile(r"(?<!\{)\{(\w+)\}(?!\})")
+
+
 def _extract_variables(template: str) -> list[str]:
-    """Extract {variable} names from a template string."""
-    pattern = re.compile(r"\{(\w+)\}")
-    return list(set(pattern.findall(template)))
+    """Extract {{variable}} names from a template string. Single-brace
+    syntax is no longer supported as of v0.6.4 — use double braces."""
+    return list(set(_VAR_PATTERN.findall(template)))
+
+
+def _render_template_string(template: str, kwargs: dict) -> tuple[str, list[str]]:
+    """Substitute {{varname}} placeholders. Returns (rendered, missing_vars)."""
+    missing: list[str] = []
+
+    def replace(match: re.Match) -> str:
+        var = match.group(1)
+        if var in kwargs:
+            return str(kwargs[var])
+        missing.append(var)
+        return match.group(0)
+
+    rendered = _VAR_PATTERN.sub(replace, template)
+    return rendered, missing
 
 
 def _validate_template(template: str) -> dict:
     """
-    Validate a prompt template by attempting to render it with placeholder
-    values for every declared variable. Catches the most common footgun:
-    unescaped JSON braces (`{`, `}`) in literal text that Python's
-    `str.format()` will try to interpret as variable substitution.
+    Validate a prompt template using the v0.6.4+ {{varname}} syntax.
 
     Returns a dict with:
       - is_valid (bool)
@@ -77,50 +97,34 @@ def _validate_template(template: str) -> dict:
 
     # Attempt a real render with placeholder values for every declared variable
     fake_kwargs = {v: f"<{v}>" for v in variables}
-    try:
-        template.format(**fake_kwargs)
-    except KeyError as e:
-        # str.format() couldn't find a variable. The exception arg is the
-        # missing key — usually whitespace, JSON-ish content, or a typo.
-        bad = str(e).strip("'\"")
-        snippet = bad[:60] + ("…" if len(bad) > 60 else "")
+    rendered, missing = _render_template_string(template, fake_kwargs)
+    if missing:
+        # This shouldn't happen since we passed kwargs for everything in `variables`
+        # but defensive in case the regex behaves unexpectedly
+        unique = sorted(set(missing))
         errors.append(
-            f"Template has an unescaped curly brace. Python tried to substitute "
-            f"a variable named `{snippet}` but no such variable was declared. "
-            f"If you meant a literal `{{` or `}}` (e.g. inside a JSON example), "
-            f"escape them by doubling: `{{{{` and `}}}}`."
-        )
-    except IndexError as e:
-        errors.append(
-            f"Template has positional placeholder syntax (e.g. `{{0}}` or `{{}}`) "
-            f"which is not supported. Use named placeholders like `{{question}}` instead."
-        )
-    except ValueError as e:
-        errors.append(
-            f"Template format error: {e}. Make sure all `{{` `}}` are either "
-            f"named variables or escaped as `{{{{` `}}}}`."
+            f"Template references unknown variables: {unique}. "
+            f"Make sure each {{{{varname}}}} matches the variables you'll pass at render time."
         )
 
     # Soft warnings — things that aren't broken but look suspicious
 
-    # 1. Detect JSON-shaped patterns that are NOT escaped
-    #    e.g.   {"key":     {  \n     {[
-    json_pattern = re.compile(r'\{\s*["\[]')
-    if json_pattern.search(template):
-        # Only warn if the template would actually render OK — otherwise
-        # the error above already covers it
-        if not errors:
-            warnings.append(
-                "Template appears to contain JSON-like syntax. Make sure any "
-                "literal `{` or `}` characters that should NOT be substituted "
-                "are escaped as `{{` and `}}`."
-            )
-
-    # 2. Detect single brace at end of line followed by quote (common JSON output spec)
-    if re.search(r'\{\s*$', template, re.MULTILINE) and not errors:
+    # 1. Legacy single-brace syntax {var} — would have worked in v0.6.3 but not now
+    legacy_matches = _LEGACY_VAR_PATTERN.findall(template)
+    if legacy_matches:
+        unique_legacy = sorted(set(legacy_matches))
         warnings.append(
-            "Template has `{` at end of a line. If this is the start of a JSON "
-            "object example, escape it as `{{`."
+            f"Found single-brace placeholders that look like the old syntax: "
+            f"{', '.join('{' + v + '}' for v in unique_legacy)}. "
+            f"In v0.6.4+ these are treated as literal text — use {{{{varname}}}} "
+            f"(double braces) instead. If these are meant to be literal characters, ignore this warning."
+        )
+
+    # 2. Empty {{}} or {{ }} placeholders
+    if re.search(r"\{\{\s*\}\}", template):
+        warnings.append(
+            "Template contains empty `{{}}` placeholders. These will not be substituted "
+            "and will appear as literal `{{}}` in the rendered output."
         )
 
     return {
@@ -469,10 +473,10 @@ def render_prompt(
     if not v:
         raise HTTPException(404, "Version not found")
 
-    try:
-        rendered = v.template.format(**variables)
-    except KeyError as e:
-        raise HTTPException(400, f"Missing variable: {e}")
+    rendered, missing = _render_template_string(v.template, variables)
+    if missing:
+        unique = sorted(set(missing))
+        raise HTTPException(400, f"Missing variable(s) at render time: {unique}")
 
     return {
         "rendered": rendered,
@@ -486,19 +490,25 @@ def render_prompt(
 # MERGE — combine multiple versions using LLM
 # ========================================
 
-# Static system prompt for merging — controlled by us, not user
+# Static system prompt for merging — controlled by us, not user.
+# Instructs the merge LLM to use the v0.6.4+ double-brace placeholder syntax.
 MERGE_SYSTEM_PROMPT = """You are a prompt engineering expert. You are given multiple versions of a prompt template.
 
 Your task is to analyze each version, identify the strengths of each, and create a single merged version that combines the best aspects of all of them.
 
-Rules:
-1. The merged version MUST use the same VAR_PLACEHOLDER style placeholders as the originals (do not invent new variables, do not remove existing ones).
-2. Keep the merged version concise but complete.
-3. Preserve any explicit instructions, constraints, or rules from any version.
-4. If versions conflict, prefer the more specific/strict instruction.
-5. Return ONLY the merged template text. No explanation, no markdown code fences, no commentary.
+CRITICAL TEMPLATE SYNTAX RULES:
+- Variable placeholders use DOUBLE curly braces: __DOUBLE_OPEN__varname__DOUBLE_CLOSE__
+- Single curly braces __SINGLE_OPEN__ and __SINGLE_CLOSE__ are LITERAL characters and are passed through as-is. Do NOT escape them.
+- This means JSON examples in prompts work without any escaping. You can write something like: Return JSON in this format: __SINGLE_OPEN__"key": "value"__SINGLE_CLOSE__
+- The variables that must be present in the output (using double-brace syntax) are: __EXPECTED_VARS__
 
-Variables that must be present in the output: __EXPECTED_VARS__
+Other rules:
+1. The merged version MUST keep the SAME variable names as the originals. Do not invent new variables, do not remove existing ones.
+2. Preserve the double-brace syntax exactly. If an original version uses __DOUBLE_OPEN__question__DOUBLE_CLOSE__, your output must also use __DOUBLE_OPEN__question__DOUBLE_CLOSE__.
+3. Keep the merged version concise but complete.
+4. Preserve any explicit instructions, constraints, or rules from any version.
+5. If versions conflict, prefer the more specific/strict instruction.
+6. Return ONLY the merged template text. No explanation, no markdown code fences, no commentary.
 
 Versions to merge:
 __VERSIONS_TEXT__
@@ -572,8 +582,12 @@ def merge_versions(
     if not llm_cfg:
         raise HTTPException(400, "No LLM configured. Add an LLM in LLM Config first.")
 
-    # Build the merge prompt (using string replace to avoid format() conflicts with {var} in templates)
-    expected_vars_str = ", ".join(f"{{{v}}}" for v in expected_vars)
+    # Build the merge prompt. We use string replace (not .format) so that
+    # literal { and } characters in the rules text and versions_text don't
+    # conflict with Python's format syntax.
+    # Variables in the OUTPUT use double-brace syntax — show them in the
+    # rules so the LLM matches the convention.
+    expected_vars_str = ", ".join(f"{{{{{v}}}}}" for v in expected_vars)
 
     # Optional user-provided edge cases / extra guidance
     extra_block = ""
@@ -585,6 +599,12 @@ def merge_versions(
 
     merge_prompt = (
         MERGE_SYSTEM_PROMPT
+        # First substitute the brace placeholders so the rules text reads naturally
+        .replace("__DOUBLE_OPEN__", "{{")
+        .replace("__DOUBLE_CLOSE__", "}}")
+        .replace("__SINGLE_OPEN__", "{")
+        .replace("__SINGLE_CLOSE__", "}")
+        # Then substitute the dynamic content
         .replace("__EXPECTED_VARS__", expected_vars_str)
         .replace("__VERSIONS_TEXT__", versions_text)
         .replace("__EXTRA_INSTRUCTIONS_BLOCK__", extra_block)

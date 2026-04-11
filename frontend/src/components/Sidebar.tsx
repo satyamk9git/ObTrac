@@ -204,7 +204,7 @@ export default function Sidebar({ project }: { project?: string }) {
 
       {/* Footer */}
       <div className="px-4 py-3 border-t border-gray-200 text-[10px] text-gray-400 flex items-center justify-between">
-        <span>v0.6.3</span>
+        <span>v0.6.4</span>
         <span className="text-gray-300">•</span>
         <span>Open Source</span>
       </div>

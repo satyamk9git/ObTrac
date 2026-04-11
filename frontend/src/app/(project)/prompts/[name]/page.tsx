@@ -308,12 +308,12 @@ function PromptDetailContent() {
             <div className="flex items-center justify-between mb-2">
               <label className="text-sm font-semibold text-gray-700">Template</label>
               <span className="text-xs text-gray-400">
-                Use <code className="text-indigo-600">{`{var}`}</code> for variables · Escape literal braces as <code className="text-indigo-600">{`{{`}</code>/<code className="text-indigo-600">{`}}`}</code>
+                Use <code className="text-indigo-600">{`{{var}}`}</code> for variables · Single <code>{`{`}</code>/<code>{`}`}</code> are literal — paste raw JSON freely
               </span>
             </div>
             <textarea value={template} onChange={e => setTemplate(e.target.value)} rows={14}
               className="w-full font-mono text-xs bg-gray-900 text-green-400 rounded-lg p-4 outline-none focus:ring-2 focus:ring-indigo-500"
-              placeholder="You are a helpful assistant.&#10;&#10;Context: {context}&#10;&#10;Question: {question}&#10;&#10;Answer:" />
+              placeholder={`You are a helpful assistant. Return your answer as JSON in this format:\n{\n  "answer": "...",\n  "confidence": 0.9\n}\n\nContext: {{context}}\nQuestion: {{question}}\nAnswer:`} />
 
             {/* Live validation */}
             {editorValidation && (
@@ -355,7 +355,7 @@ function PromptDetailContent() {
                       <>
                         Detected variables:{" "}
                         {editorValidation.variables.map((v) => (
-                          <code key={v} className="text-indigo-600 mx-0.5">{`{${v}}`}</code>
+                          <code key={v} className="text-indigo-600 mx-0.5">{`{{${v}}}`}</code>
                         ))}
                       </>
                     ) : (
@@ -665,7 +665,7 @@ function PromptDetailContent() {
               <div className="space-y-2">
                 {variables.map((v: string) => (
                   <div key={v}>
-                    <label className="block text-xs text-gray-600 mb-1">{`{${v}}`}</label>
+                    <label className="block text-xs text-gray-600 mb-1"><code className="text-indigo-600">{`{{${v}}}`}</code></label>
                     <input value={testVars[v] || ""} onChange={e => setTestVars({ ...testVars, [v]: e.target.value })}
                       className="input-dark" placeholder={`Value for ${v}`} />
                   </div>

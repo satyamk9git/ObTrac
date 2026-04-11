@@ -223,81 +223,72 @@ INFO:obtrac:Schema migration: added budgets.last_fired_at
 
 This is what makes the v0.4.1-stable → v0.6.1 upgrade safe without any manual SQL.
 
-### 11. Prompt template validation (v0.6.3+)
+### 11. Prompt template syntax (v0.6.4+)
 
-Prompt templates use Python's `str.format()` for variable substitution, which means **literal `{` and `}` characters in your template are interpreted as variable placeholders**. This is a footgun if your prompt asks the LLM to return JSON.
+ObTrac uses **Mustache-style double-brace placeholders** for prompt variables. This is a deliberate departure from Python's native `str.format()` because it makes JSON examples in prompts work without any escaping.
 
-**The bug:** an unescaped `{` followed by anything that's not a known variable name throws `KeyError` at render time.
+#### The rules
 
-**The fix:** double the braces. `{{` renders to a literal `{`, `}}` renders to a literal `}`. Real variables like `{question}` still work normally.
-
-#### ❌ Broken — looks fine, fails at render
-
-```python
-template = """Return JSON in this format:
-{
-  "answer": "your answer",
-  "confidence": 0.9
-}
-
-Question: {question}
-Context: {context}
-"""
-
-prompt = template.format(question="What?", context="ctx")
-# 💥 KeyError: '\n  "answer"'
-```
-
-Python sees `{` followed by a newline and tries to look up a variable named `\n  "answer"` which doesn't exist.
-
-#### ✓ Fixed — escape literal braces
-
-```python
-template = """Return JSON in this format:
-{{
-  "answer": "your answer",
-  "confidence": 0.9
-}}
-
-Question: {question}
-Context: {context}
-"""
-
-prompt = template.format(question="What?", context="ctx")
-```
-
-Output:
-```
-Return JSON in this format:
-{
-  "answer": "your answer",
-  "confidence": 0.9
-}
-
-Question: What?
-Context: ctx
-```
-
-The doubled `{{` `}}` collapse back to single `{` `}` after formatting. Variables still substitute normally.
-
-#### Quick reference
-
-| In your template | What it means at render time |
+| Syntax | Meaning |
 |---|---|
-| `{question}` | Substituted with the value of `question=` kwarg |
-| `{{` | Literal `{` |
-| `}}` | Literal `}` |
-| `{{example}}` | Literal `{example}` (NOT a variable) |
-| `{{"key": "value"}}` | Literal `{"key": "value"}` (NOT a variable) |
+| `{{question}}` | Substituted with the value of `question=` kwarg at render time |
+| `{` and `}` (single braces) | **Literal characters.** Always passed through unchanged. |
+| `{"key": "value"}` | Literal JSON. Just write it as-is. |
+| `{{}}` (empty) | Renders as literal `{{}}` — empty placeholders aren't substituted |
 
-#### Auto-validation in the dashboard (v0.6.3+)
+Variable names must be valid Python identifiers — letters, digits, and underscores only.
 
-ObTrac now validates your template **as you type** in the prompt create form and editor. The backend tries `template.format()` with placeholder values for every declared variable. If it raises a `KeyError`, you get a red error banner like:
+#### ✓ Just write JSON examples directly
 
-> **Template won't render — fix before saving**
-> *Template has an unescaped curly brace. Python tried to substitute a variable named `\n  "answer"` but no such variable was declared. If you meant a literal `{` or `}` (e.g. inside a JSON example), escape them by doubling: `{{` and `}}`.*
+```python
+template = """Return JSON in this format:
+{
+  "answer": "your answer",
+  "confidence": 0.9
+}
 
-The **Save** button is disabled until the errors are fixed. There are also softer yellow warnings for templates that look JSON-shaped but happen to render OK — these don't block save, just remind you to double-check.
+Question: {{question}}
+Context: {{context}}
+"""
+```
+
+That's it. No escaping. The single `{` and `}` around the JSON example are literal characters. Only `{{question}}` and `{{context}}` get substituted.
+
+#### Compared to other templating systems
+
+| System | Variable syntax | JSON in prompts |
+|---|---|---|
+| **ObTrac (v0.6.4+)** | `{{var}}` | Just write it |
+| **Python `str.format()`** | `{var}` | Must escape `{` as `{{` and `}` as `}}` |
+| **Mustache / Handlebars** | `{{var}}` | Just write it |
+| **Jinja2** | `{{ var }}` | Just write it (with spaces) |
+| **f-strings** | `{var}` | Must escape (same as `str.format()`) |
+
+ObTrac follows the Mustache convention because it's the most ergonomic for LLM prompts, which frequently contain JSON examples in their instructions.
+
+#### Migrating from v0.6.3 and earlier
+
+If you have prompts written in the old single-brace style (`{question}`), they will **silently fail to render** in v0.6.4+ — the validator will warn you with a soft warning identifying the legacy placeholders, but the template will technically be "valid" (because no errors are raised). The renderer just won't substitute them.
+
+To migrate, replace `{var}` with `{{var}}` for every declared variable:
+
+```python
+# Old (v0.6.3 and earlier — no longer renders)
+template = "Hello {name}, your context is: {context}"
+
+# New (v0.6.4+)
+template = "Hello {{name}}, your context is: {{context}}"
+```
+
+The dashboard validator on the prompt edit form will show a yellow warning if it sees single-brace placeholders, so you can spot them at a glance.
+
+#### Auto-validation in the dashboard
+
+ObTrac validates your template **as you type** in the prompt create form and editor. The backend extracts every `{{varname}}` and verifies it can render with placeholder values. You'll see one of three states:
+
+1. 🟢 **Green checkmark + variable list** — template is valid, here are the variables it'll substitute
+2. 🟡 **Yellow warning** — looks suspicious (e.g., legacy single-brace placeholders found, or empty `{{}}`) but allowed
+3. 🔴 **Red error** — template won't render at all, save is blocked
 
 You can also call the validation endpoint directly:
 
@@ -306,18 +297,81 @@ import requests
 
 r = requests.post(
     "http://localhost:8100/api/v1/prompts/validate",
-    json={"template": 'Return JSON: {"key": "value"}'},
+    json={"template": "Hello {{name}}, return JSON: {\"key\": \"value\"}"},
 )
 print(r.json())
 # {
-#   "is_valid": false,
-#   "variables": [],
+#   "is_valid": true,
+#   "variables": ["name"],
 #   "warnings": [],
-#   "errors": ["Template has an unescaped curly brace..."]
+#   "errors": []
 # }
 ```
 
-This is useful for CI scripts that lint your prompt files before committing them.
+Useful for CI scripts that lint your prompt files before committing them.
+
+#### A complete example
+
+```python
+# templates/extract_employee.txt
+template = """You are an information extraction assistant. Use ONLY the provided context to answer the question. Return your answer as a JSON object in this exact format (no preamble, no markdown):
+
+{
+  "name": "<full name>",
+  "dept": "<department>",
+  "id": "<employee id>"
+}
+
+If any field is not in the context, set its value to null.
+
+Context:
+{{context}}
+
+Question:
+{{question}}
+
+JSON answer:"""
+```
+
+In code:
+
+```python
+from obtrac_sdk import get_prompt
+
+prompt = get_prompt("extract_employee")
+text = prompt.render(
+    context="Satyam Verma (id: E1029) works in the Data & GenAI Engineering department.",
+    question="Who is Satyam and what does he do?",
+)
+
+# `text` now contains the rendered prompt with the JSON example LITERAL
+# (not substituted) and {{context}} / {{question}} replaced with the values
+# you passed.
+```
+
+The rendered output:
+
+```
+You are an information extraction assistant. Use ONLY the provided context to answer the question. Return your answer as a JSON object in this exact format (no preamble, no markdown):
+
+{
+  "name": "<full name>",
+  "dept": "<department>",
+  "id": "<employee id>"
+}
+
+If any field is not in the context, set its value to null.
+
+Context:
+Satyam Verma (id: E1029) works in the Data & GenAI Engineering department.
+
+Question:
+Who is Satyam and what does he do?
+
+JSON answer:
+```
+
+Notice the JSON example is preserved exactly as written — no escaping was needed.
 
 ---
 
