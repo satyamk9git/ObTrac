@@ -11,17 +11,28 @@ import {
 const API = "http://localhost:8100/api/v1";
 const COLORS = ["#6366f1", "#8b5cf6", "#06b6d4", "#10b981", "#f59e0b", "#ef4444"];
 
+type Period = "daily" | "weekly" | "monthly" | "lifetime";
+
+const PERIOD_LABELS: Record<Period, string> = {
+  daily: "Today",
+  weekly: "This Week",
+  monthly: "This Month",
+  lifetime: "Lifetime",
+};
+
 function AnalyticsContent() {
   const searchParams = useSearchParams();
   const project = searchParams.get("project") || "all";
   const [tokenData, setTokenData] = useState<any>(null);
   const [costOverTime, setCostOverTime] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [period, setPeriod] = useState<Period>("lifetime");
 
   useEffect(() => {
+    setLoading(true);
     Promise.all([
-      fetch(`${API}/analytics/tokens?project=${encodeURIComponent(project)}`).then((r) => r.json()),
-      fetch(`${API}/analytics/cost/over-time?project=${encodeURIComponent(project)}`).then((r) => r.json()),
+      fetch(`${API}/analytics/tokens?project=${encodeURIComponent(project)}&period=${period}`).then((r) => r.json()),
+      fetch(`${API}/analytics/cost/over-time?project=${encodeURIComponent(project)}&period=${period}`).then((r) => r.json()),
     ])
       .then(([tokens, cost]) => {
         setTokenData(tokens);
@@ -29,15 +40,43 @@ function AnalyticsContent() {
       })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [project]);
+  }, [project, period]);
+
+  // Period filter component — used in header in both empty and populated states
+  const PeriodToggle = (
+    <div className="inline-flex rounded-lg border border-gray-200 bg-white p-1 shadow-sm">
+      {(Object.keys(PERIOD_LABELS) as Period[]).map((p) => (
+        <button
+          key={p}
+          onClick={() => setPeriod(p)}
+          className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+            period === p
+              ? "bg-indigo-600 text-white shadow-sm"
+              : "text-gray-600 hover:bg-gray-50"
+          }`}
+        >
+          {PERIOD_LABELS[p]}
+        </button>
+      ))}
+    </div>
+  );
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-20">
-        <svg className="animate-spin w-6 h-6 text-indigo-500" viewBox="0 0 24 24">
-          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-        </svg>
+      <div>
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Analytics</h1>
+            <p className="text-sm text-gray-500">Loading {PERIOD_LABELS[period].toLowerCase()} stats...</p>
+          </div>
+          {PeriodToggle}
+        </div>
+        <div className="flex items-center justify-center py-20">
+          <svg className="animate-spin w-6 h-6 text-indigo-500" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+        </div>
       </div>
     );
   }
@@ -45,10 +84,20 @@ function AnalyticsContent() {
   if (!tokenData || tokenData.total_traces === 0) {
     return (
       <div>
-        <h1 className="text-2xl font-bold text-gray-900 mb-4">Analytics</h1>
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Analytics</h1>
+            <p className="text-sm text-gray-500">No traces found for {PERIOD_LABELS[period].toLowerCase()}</p>
+          </div>
+          {PeriodToggle}
+        </div>
         <div className="card text-center py-16">
-          <h3 className="text-lg font-semibold text-gray-700 mb-2">No data yet</h3>
-          <p className="text-sm text-gray-500">Run queries in the RAG or Agent app to see token and cost analytics.</p>
+          <h3 className="text-lg font-semibold text-gray-700 mb-2">No data in this window</h3>
+          <p className="text-sm text-gray-500">
+            {period === "lifetime"
+              ? "Run queries in the RAG or Agent app to see token and cost analytics."
+              : `No traces in the selected window. Try switching to a wider period.`}
+          </p>
         </div>
       </div>
     );
@@ -74,8 +123,14 @@ function AnalyticsContent() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Analytics</h1>
-          <p className="text-sm text-gray-500">{tokenData.total_traces} traces analyzed</p>
+          <p className="text-sm text-gray-500">
+            {tokenData.total_traces} traces · {PERIOD_LABELS[period]}
+            {tokenData.period_start && period !== "lifetime" && (
+              <span className="text-gray-400"> · since {new Date(tokenData.period_start).toLocaleString()}</span>
+            )}
+          </p>
         </div>
+        {PeriodToggle}
       </div>
 
       {/* Summary Cards */}

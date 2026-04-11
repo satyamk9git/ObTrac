@@ -205,7 +205,12 @@ function AlertsContent() {
                   💡 Budget alerts (50%, 80%, 100%) are now configured per-budget on the Budgets page — no need to set them here.
                 </p>
               </div>
-              <button type="submit" className="btn-primary">Create Channel</button>
+              <div className="flex items-center gap-3">
+                <button type="submit" className="btn-primary">Create Channel</button>
+                <p className="text-[11px] text-gray-500">
+                  💡 After creating, click <strong>Send Test</strong> on the channel card to verify the webhook URL actually delivers a message.
+                </p>
+              </div>
             </form>
           )}
 
@@ -240,7 +245,16 @@ function AlertsContent() {
                       )}
                     </div>
                     <div className="flex gap-2">
-                      <button onClick={() => handleTest(c.id)} className="text-xs btn-secondary">Test</button>
+                      <button
+                        onClick={() => handleTest(c.id)}
+                        className="text-xs px-3 py-1.5 rounded border border-purple-300 text-purple-700 hover:bg-purple-50 font-medium flex items-center gap-1"
+                        title="Send a test alert through this channel to verify the URL works"
+                      >
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        Send Test
+                      </button>
                       <button onClick={() => handleDelete(c.id)} className="text-xs text-red-500 hover:text-red-600">Delete</button>
                     </div>
                   </div>

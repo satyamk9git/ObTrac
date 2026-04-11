@@ -12,16 +12,36 @@ from app.db.models import TraceRecord, SpanRecord, LLMConfigRecord
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
 
+def _period_start(period: str):
+    """Convert a period name to a start datetime. None means lifetime."""
+    from datetime import datetime, timedelta
+    p = (period or "lifetime").lower()
+    now = datetime.utcnow()
+    if p == "daily":
+        return now.replace(hour=0, minute=0, second=0, microsecond=0)
+    if p == "weekly":
+        days = now.weekday()  # Monday = 0
+        return (now - timedelta(days=days)).replace(hour=0, minute=0, second=0, microsecond=0)
+    if p == "monthly":
+        return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    return None  # lifetime — no filter
+
+
 @router.get("/tokens")
 def get_token_analytics(
     project: str = Query("all"),
-    limit: int = Query(100, le=500),
+    limit: int = Query(500, le=2000),
+    period: str = Query("lifetime", description="daily | weekly | monthly | lifetime"),
     db: Session = Depends(get_db),
 ):
     """Token usage analytics at project level."""
     query = db.query(TraceRecord)
     if project != "all":
         query = query.filter(TraceRecord.project == project)
+
+    start = _period_start(period)
+    if start is not None:
+        query = query.filter(TraceRecord.created_at >= start)
 
     traces = query.order_by(TraceRecord.created_at.desc()).limit(limit).all()
 
@@ -63,6 +83,8 @@ def get_token_analytics(
 
     return {
         "project": project,
+        "period": period,
+        "period_start": start.isoformat() if start else None,
         "total_traces": len(traces),
         "totals": {
             "prompt_tokens": total_prompt,
@@ -141,13 +163,18 @@ def get_token_by_span(
 @router.get("/cost/over-time")
 def get_cost_over_time(
     project: str = Query("all"),
-    limit: int = Query(50, le=200),
+    limit: int = Query(500, le=2000),
+    period: str = Query("lifetime", description="daily | weekly | monthly | lifetime"),
     db: Session = Depends(get_db),
 ):
     """Cost and token usage over time for charts."""
     query = db.query(TraceRecord)
     if project != "all":
         query = query.filter(TraceRecord.project == project)
+
+    start = _period_start(period)
+    if start is not None:
+        query = query.filter(TraceRecord.created_at >= start)
 
     traces = query.order_by(TraceRecord.created_at.asc()).limit(limit).all()
 
@@ -184,6 +211,8 @@ def get_cost_over_time(
 
     return {
         "project": project,
+        "period": period,
+        "period_start": start.isoformat() if start else None,
         "data_points": data_points,
         "total_cost": round(running_cost, 6),
         "total_tokens": running_tokens,

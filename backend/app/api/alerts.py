@@ -166,7 +166,7 @@ def test_channel(channel_id: str, db: Session = Depends(get_db)):
         channel,
         event_type="test",
         severity="info",
-        message="Test alert from ObTrac",
+        message="Welcome to ObTrac",
         payload={"test": True, "timestamp": datetime.utcnow().isoformat()},
         db=db,
     )

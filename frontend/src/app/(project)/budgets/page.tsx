@@ -40,8 +40,6 @@ function BudgetsContent() {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [testingId, setTestingId] = useState<string | null>(null);
-  const [testResult, setTestResult] = useState<Record<string, any>>({});
 
   // Form state
   const [name, setName] = useState("Monthly Budget");
@@ -134,20 +132,6 @@ function BudgetsContent() {
       body: JSON.stringify({ is_active: !b.is_active }),
     });
     fetchAll();
-  };
-
-  const handleTestFire = async (b: Budget) => {
-    setTestingId(b.id);
-    setTestResult((prev) => ({ ...prev, [b.id]: null }));
-    try {
-      const r = await fetch(`${API}/budgets/${b.id}/test-fire`, { method: "POST" });
-      const data = await r.json();
-      setTestResult((prev) => ({ ...prev, [b.id]: { ok: r.ok, data } }));
-    } catch (e: any) {
-      setTestResult((prev) => ({ ...prev, [b.id]: { ok: false, data: { detail: e.message } } }));
-    } finally {
-      setTestingId(null);
-    }
   };
 
   const toggleChannel = (id: string) => {
@@ -288,7 +272,6 @@ function BudgetsContent() {
           {budgets.map((b) => {
             const statusColor = b.status === "exceeded" ? "red" : b.status === "warning" ? "yellow" : "green";
             const barColor = statusColor === "red" ? "bg-red-500" : statusColor === "yellow" ? "bg-yellow-500" : "bg-green-500";
-            const tr = testResult[b.id];
 
             // Period-aware label so the "spent" number isn't confused with lifetime cost
             const spentLabel =
@@ -400,13 +383,6 @@ function BudgetsContent() {
                           {c.channel_type === "slack" ? "💬" : "🔗"} {c.name}
                         </span>
                       ))}
-                      <button
-                        onClick={() => handleTestFire(b)}
-                        disabled={testingId === b.id}
-                        className="text-[11px] px-2 py-0.5 rounded border border-purple-300 text-purple-700 hover:bg-purple-50 disabled:opacity-50 ml-1"
-                      >
-                        {testingId === b.id ? "Testing..." : "Test Fire"}
-                      </button>
                     </div>
                   ) : (
                     <div className="flex items-center gap-2 text-[11px] text-yellow-700 bg-yellow-50 border border-yellow-200 rounded px-2 py-1.5">
@@ -417,17 +393,6 @@ function BudgetsContent() {
                       <button onClick={() => handleStartEdit(b)} className="underline font-semibold">
                         Add channels
                       </button>
-                    </div>
-                  )}
-                  {tr && (
-                    <div className={`mt-2 text-xs px-3 py-1.5 rounded border ${
-                      tr.ok
-                        ? "bg-green-50 text-green-800 border-green-200"
-                        : "bg-red-50 text-red-800 border-red-200"
-                    }`}>
-                      {tr.ok
-                        ? `✓ Test alert fired to ${tr.data.channels_fired} channel${tr.data.channels_fired !== 1 ? "s" : ""}`
-                        : `✗ ${tr.data.detail || "Test failed"}`}
                     </div>
                   )}
                 </div>
