@@ -65,3 +65,10 @@ desktop.ini
 # ===== Cache =====
 .cache/
 *.bak
+
+# ===== Local pitch / sales artifacts (kept out of repo) =====
+BUSINESS_PITCH.txt
+PPT_CONTENT_FOR_GEMINI.txt
+ObTrac_Pitch.pptx
+generate_pitch_ppt.py
+PitchIN/
