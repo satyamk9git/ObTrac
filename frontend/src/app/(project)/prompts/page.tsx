@@ -20,6 +20,15 @@ function PromptsContent() {
   const [newTemplate, setNewTemplate] = useState("");
   const [newCommit, setNewCommit] = useState("Initial version");
 
+  // Live validation
+  const [validation, setValidation] = useState<{
+    is_valid: boolean;
+    variables: string[];
+    warnings: string[];
+    errors: string[];
+  } | null>(null);
+  const [creating, setCreating] = useState(false);
+
   const fetchPrompts = () => {
     setLoading(true);
     fetch(`${API}/prompts`)
@@ -31,27 +40,62 @@ function PromptsContent() {
 
   useEffect(() => { fetchPrompts(); }, []);
 
+  // Debounced live validation as the user types in the template field
+  useEffect(() => {
+    if (!showForm || !newTemplate.trim()) {
+      setValidation(null);
+      return;
+    }
+    const handle = setTimeout(() => {
+      fetch(`${API}/prompts/validate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ template: newTemplate }),
+      })
+        .then(r => r.json())
+        .then(setValidation)
+        .catch(() => setValidation(null));
+    }, 400);
+    return () => clearTimeout(handle);
+  }, [newTemplate, showForm]);
+
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
-    const res = await fetch(`${API}/prompts`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: newName,
-        description: newDesc,
-        tags: newTags.split(",").map(t => t.trim()).filter(Boolean),
-        template: newTemplate,
-        commit_message: newCommit,
-        created_by: "satyam",
-      }),
-    });
-    if (res.ok) {
-      setShowForm(false);
-      setNewName(""); setNewDesc(""); setNewTags(""); setNewTemplate(""); setNewCommit("Initial version");
-      fetchPrompts();
-    } else {
-      const err = await res.json();
-      alert(err.detail || "Failed to create prompt");
+    if (validation && !validation.is_valid) {
+      alert("Fix the template errors before saving.");
+      return;
+    }
+    setCreating(true);
+    try {
+      const res = await fetch(`${API}/prompts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: newName,
+          description: newDesc,
+          tags: newTags.split(",").map(t => t.trim()).filter(Boolean),
+          template: newTemplate,
+          commit_message: newCommit,
+          created_by: "satyam",
+        }),
+      });
+      if (res.ok) {
+        setShowForm(false);
+        setNewName(""); setNewDesc(""); setNewTags(""); setNewTemplate(""); setNewCommit("Initial version");
+        setValidation(null);
+        fetchPrompts();
+      } else {
+        const err = await res.json();
+        // The backend now returns structured validation errors
+        const detail = err.detail;
+        if (detail && typeof detail === "object" && detail.errors) {
+          alert("Validation errors:\n\n" + detail.errors.join("\n\n"));
+        } else {
+          alert(detail || "Failed to create prompt");
+        }
+      }
+    } finally {
+      setCreating(false);
     }
   };
 
@@ -94,16 +138,81 @@ function PromptsContent() {
               className="input-dark" placeholder="Main RAG answer generation prompt" />
           </div>
           <div>
-            <label className="block text-xs text-gray-600 mb-1">Template — use {`{variable}`} for variables</label>
+            <label className="block text-xs text-gray-600 mb-1">
+              Template — use {`{variable}`} for variables.{" "}
+              <span className="text-gray-400">For literal curly braces (e.g. JSON), escape as <code className="text-indigo-600">{`{{`}</code> and <code className="text-indigo-600">{`}}`}</code></span>
+            </label>
             <textarea value={newTemplate} onChange={e => setNewTemplate(e.target.value)} required rows={6}
               className="input-dark font-mono text-xs" placeholder="You are a helpful assistant.&#10;&#10;Context: {context}&#10;&#10;Question: {question}&#10;&#10;Answer:" />
+
+            {/* Live validation panel */}
+            {validation && (
+              <div className="mt-2 space-y-1.5">
+                {/* Errors (red, blocks save) */}
+                {validation.errors && validation.errors.length > 0 && (
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-2">
+                    <div className="flex items-start gap-2">
+                      <svg className="w-4 h-4 text-red-600 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                      </svg>
+                      <div className="flex-1">
+                        <p className="text-xs font-semibold text-red-900">Template won't render — fix before saving</p>
+                        {validation.errors.map((e, i) => (
+                          <p key={i} className="text-[11px] text-red-700 mt-0.5">{e}</p>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Warnings (yellow, allows save) */}
+                {validation.errors.length === 0 && validation.warnings && validation.warnings.length > 0 && (
+                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-2">
+                    <div className="flex items-start gap-2">
+                      <svg className="w-4 h-4 text-yellow-600 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      <div className="flex-1">
+                        <p className="text-xs font-semibold text-yellow-900">Looks suspicious — double-check before saving</p>
+                        {validation.warnings.map((w, i) => (
+                          <p key={i} className="text-[11px] text-yellow-700 mt-0.5">{w}</p>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Detected variables (green, just informational) */}
+                {validation.is_valid && validation.variables.length > 0 && (
+                  <div className="text-[11px] text-gray-500">
+                    <span className="font-semibold text-green-700">✓ Template valid.</span>{" "}
+                    Detected variables:{" "}
+                    {validation.variables.map((v, i) => (
+                      <code key={v} className="text-indigo-600 mx-0.5">{`{${v}}`}</code>
+                    ))}
+                  </div>
+                )}
+                {validation.is_valid && validation.variables.length === 0 && (
+                  <div className="text-[11px] text-gray-500">
+                    <span className="font-semibold text-green-700">✓ Template valid.</span>{" "}
+                    <span className="text-gray-400">(No variables detected — this prompt is a static string.)</span>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
           <div>
             <label className="block text-xs text-gray-600 mb-1">Commit message</label>
             <input value={newCommit} onChange={e => setNewCommit(e.target.value)}
               className="input-dark" placeholder="Initial version" />
           </div>
-          <button type="submit" className="btn-primary">Create Prompt</button>
+          <button
+            type="submit"
+            disabled={creating || (validation !== null && !validation.is_valid)}
+            className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {creating ? "Creating..." : "Create Prompt"}
+          </button>
         </form>
       )}
 

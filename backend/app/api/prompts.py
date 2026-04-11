@@ -55,6 +55,82 @@ def _extract_variables(template: str) -> list[str]:
     return list(set(pattern.findall(template)))
 
 
+def _validate_template(template: str) -> dict:
+    """
+    Validate a prompt template by attempting to render it with placeholder
+    values for every declared variable. Catches the most common footgun:
+    unescaped JSON braces (`{`, `}`) in literal text that Python's
+    `str.format()` will try to interpret as variable substitution.
+
+    Returns a dict with:
+      - is_valid (bool)
+      - variables (list of declared variable names)
+      - warnings (list of human-readable strings, NOT fatal)
+      - errors   (list of human-readable strings, fatal — render will fail)
+
+    The frontend uses this to show inline feedback at save time and the
+    backend uses it to refuse outright-broken templates.
+    """
+    warnings: list[str] = []
+    errors: list[str] = []
+    variables = _extract_variables(template)
+
+    # Attempt a real render with placeholder values for every declared variable
+    fake_kwargs = {v: f"<{v}>" for v in variables}
+    try:
+        template.format(**fake_kwargs)
+    except KeyError as e:
+        # str.format() couldn't find a variable. The exception arg is the
+        # missing key — usually whitespace, JSON-ish content, or a typo.
+        bad = str(e).strip("'\"")
+        snippet = bad[:60] + ("…" if len(bad) > 60 else "")
+        errors.append(
+            f"Template has an unescaped curly brace. Python tried to substitute "
+            f"a variable named `{snippet}` but no such variable was declared. "
+            f"If you meant a literal `{{` or `}}` (e.g. inside a JSON example), "
+            f"escape them by doubling: `{{{{` and `}}}}`."
+        )
+    except IndexError as e:
+        errors.append(
+            f"Template has positional placeholder syntax (e.g. `{{0}}` or `{{}}`) "
+            f"which is not supported. Use named placeholders like `{{question}}` instead."
+        )
+    except ValueError as e:
+        errors.append(
+            f"Template format error: {e}. Make sure all `{{` `}}` are either "
+            f"named variables or escaped as `{{{{` `}}}}`."
+        )
+
+    # Soft warnings — things that aren't broken but look suspicious
+
+    # 1. Detect JSON-shaped patterns that are NOT escaped
+    #    e.g.   {"key":     {  \n     {[
+    json_pattern = re.compile(r'\{\s*["\[]')
+    if json_pattern.search(template):
+        # Only warn if the template would actually render OK — otherwise
+        # the error above already covers it
+        if not errors:
+            warnings.append(
+                "Template appears to contain JSON-like syntax. Make sure any "
+                "literal `{` or `}` characters that should NOT be substituted "
+                "are escaped as `{{` and `}}`."
+            )
+
+    # 2. Detect single brace at end of line followed by quote (common JSON output spec)
+    if re.search(r'\{\s*$', template, re.MULTILINE) and not errors:
+        warnings.append(
+            "Template has `{` at end of a line. If this is the start of a JSON "
+            "object example, escape it as `{{`."
+        )
+
+    return {
+        "is_valid": len(errors) == 0,
+        "variables": sorted(variables),
+        "warnings": warnings,
+        "errors": errors,
+    }
+
+
 def _find_prompt(db: Session, name: str) -> Optional[PromptRecord]:
     """Find a prompt by name. Prompts are now global — project filter is ignored.
     Returns the most recently updated prompt with this name (handles legacy duplicates)."""
@@ -129,12 +205,32 @@ def list_prompts(
     return {"prompts": result}
 
 
+@router.post("/validate")
+def validate_template_endpoint(payload: dict):
+    """Standalone validation endpoint — used by the frontend to give live
+    feedback in the prompt create/edit form before the user clicks Save.
+    Accepts {"template": "..."} and returns {is_valid, variables, warnings, errors}."""
+    template = payload.get("template", "")
+    return _validate_template(template)
+
+
 @router.post("", status_code=201)
 def create_prompt(data: PromptCreate, db: Session = Depends(get_db)):
     """Create a new prompt with its first version. Names must be globally unique."""
     existing = _find_prompt(db, data.name)
     if existing:
         raise HTTPException(409, f"Prompt '{data.name}' already exists")
+
+    # Validate the template before saving so users get a clear error
+    # at save time, not at first render time
+    validation = _validate_template(data.template)
+    if not validation["is_valid"]:
+        raise HTTPException(400, {
+            "message": "Template has rendering errors",
+            "errors": validation["errors"],
+            "warnings": validation["warnings"],
+            "variables": validation["variables"],
+        })
 
     prompt = PromptRecord(
         id=str(uuid.uuid4()),
@@ -164,7 +260,11 @@ def create_prompt(data: PromptCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(prompt)
 
-    return _prompt_to_dict(prompt, include_versions=True)
+    response = _prompt_to_dict(prompt, include_versions=True)
+    # Include any soft warnings so the UI can display them after save
+    if validation["warnings"]:
+        response["validation_warnings"] = validation["warnings"]
+    return response
 
 
 @router.get("/{name}")
@@ -226,6 +326,16 @@ def create_version(
     if not prompt:
         raise HTTPException(404, "Prompt not found")
 
+    # Validate the template before saving
+    validation = _validate_template(data.template)
+    if not validation["is_valid"]:
+        raise HTTPException(400, {
+            "message": "Template has rendering errors",
+            "errors": validation["errors"],
+            "warnings": validation["warnings"],
+            "variables": validation["variables"],
+        })
+
     # Get next version number
     max_version = db.query(func.max(PromptVersionRecord.version)).filter(
         PromptVersionRecord.prompt_id == prompt.id
@@ -253,7 +363,10 @@ def create_version(
     db.commit()
     db.refresh(version)
 
-    return _version_to_dict(version)
+    response = _version_to_dict(version)
+    if validation["warnings"]:
+        response["validation_warnings"] = validation["warnings"]
+    return response
 
 
 @router.get("/{name}/versions/{version}")

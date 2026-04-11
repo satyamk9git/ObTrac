@@ -4,6 +4,32 @@ All notable changes to ObTrac. Format roughly follows [Keep a Changelog](https:/
 
 ---
 
+## [v0.6.3] — Prompt template validation
+
+**Tag:** `v0.6.3`
+**Install:** `pip install "obtrac[all] @ git+https://github.com/satyamk9git/ObTrac.git@v0.6.3"`
+
+Catches the most common prompt-template footgun: unescaped `{` and `}` characters that Python's `str.format()` interprets as variable placeholders. Most often hits users who include JSON examples in their prompts ("return your answer in this format: { ... }").
+
+### Added
+- **Backend `_validate_template()` helper** in `app/api/prompts.py` that attempts a real render with placeholder values for every declared variable. Catches `KeyError`, `IndexError`, `ValueError` from `str.format()` and returns structured error messages.
+- **`POST /api/v1/prompts/validate`** standalone endpoint for live UI validation. Accepts `{"template": "..."}` and returns `{is_valid, variables, warnings, errors}`. No DB writes — pure validation.
+- **Server-side enforcement**: `POST /prompts` and `POST /prompts/{name}/versions` now call `_validate_template()` before saving and return `400` with structured error details if the template can't render. Existing prompts in the DB are untouched.
+- **Live validation UI** on the prompt create form (`/prompts`) and the editor tab on the detail page (`/prompts/<name>`). Debounced 400ms after the user stops typing. Renders three states: red error banner (blocks save), yellow warning banner (allows save with caution), or green checkmark with the detected variable list.
+- **Save buttons disabled** when the template has rendering errors. Prevents users from creating broken prompts that fail at first render.
+- **Soft warnings** for templates that look JSON-shaped but happen to render OK. Doesn't block save — just reminds the user to double-check their escaping.
+- **EXAMPLES.md section 11** "Prompt template validation" documenting the brace-escape rule, the `❌ broken` vs `✓ fixed` patterns, the quick reference table, and the new auto-validation feature.
+
+### Why this matters
+Before v0.6.3, you'd write a prompt like:
+```
+Return JSON: {"answer": "..."}
+Question: {question}
+```
+…save it successfully, then crash with `KeyError: '\n  "answer"'` the first time your code called `prompt.render()`. The error message gave no hint about the root cause. Now you see the error inline as you type, with a clear explanation: *"Template has an unescaped curly brace. Python tried to substitute a variable named `answer` but no such variable was declared. If you meant a literal `{` or `}` (e.g. inside a JSON example), escape them by doubling: `{{` and `}}`."*
+
+---
+
 ## [v0.6.2] — Documentation refresh
 
 **Tag:** `v0.6.2`

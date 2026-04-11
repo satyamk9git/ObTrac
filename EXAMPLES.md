@@ -223,6 +223,102 @@ INFO:obtrac:Schema migration: added budgets.last_fired_at
 
 This is what makes the v0.4.1-stable → v0.6.1 upgrade safe without any manual SQL.
 
+### 11. Prompt template validation (v0.6.3+)
+
+Prompt templates use Python's `str.format()` for variable substitution, which means **literal `{` and `}` characters in your template are interpreted as variable placeholders**. This is a footgun if your prompt asks the LLM to return JSON.
+
+**The bug:** an unescaped `{` followed by anything that's not a known variable name throws `KeyError` at render time.
+
+**The fix:** double the braces. `{{` renders to a literal `{`, `}}` renders to a literal `}`. Real variables like `{question}` still work normally.
+
+#### ❌ Broken — looks fine, fails at render
+
+```python
+template = """Return JSON in this format:
+{
+  "answer": "your answer",
+  "confidence": 0.9
+}
+
+Question: {question}
+Context: {context}
+"""
+
+prompt = template.format(question="What?", context="ctx")
+# 💥 KeyError: '\n  "answer"'
+```
+
+Python sees `{` followed by a newline and tries to look up a variable named `\n  "answer"` which doesn't exist.
+
+#### ✓ Fixed — escape literal braces
+
+```python
+template = """Return JSON in this format:
+{{
+  "answer": "your answer",
+  "confidence": 0.9
+}}
+
+Question: {question}
+Context: {context}
+"""
+
+prompt = template.format(question="What?", context="ctx")
+```
+
+Output:
+```
+Return JSON in this format:
+{
+  "answer": "your answer",
+  "confidence": 0.9
+}
+
+Question: What?
+Context: ctx
+```
+
+The doubled `{{` `}}` collapse back to single `{` `}` after formatting. Variables still substitute normally.
+
+#### Quick reference
+
+| In your template | What it means at render time |
+|---|---|
+| `{question}` | Substituted with the value of `question=` kwarg |
+| `{{` | Literal `{` |
+| `}}` | Literal `}` |
+| `{{example}}` | Literal `{example}` (NOT a variable) |
+| `{{"key": "value"}}` | Literal `{"key": "value"}` (NOT a variable) |
+
+#### Auto-validation in the dashboard (v0.6.3+)
+
+ObTrac now validates your template **as you type** in the prompt create form and editor. The backend tries `template.format()` with placeholder values for every declared variable. If it raises a `KeyError`, you get a red error banner like:
+
+> **Template won't render — fix before saving**
+> *Template has an unescaped curly brace. Python tried to substitute a variable named `\n  "answer"` but no such variable was declared. If you meant a literal `{` or `}` (e.g. inside a JSON example), escape them by doubling: `{{` and `}}`.*
+
+The **Save** button is disabled until the errors are fixed. There are also softer yellow warnings for templates that look JSON-shaped but happen to render OK — these don't block save, just remind you to double-check.
+
+You can also call the validation endpoint directly:
+
+```python
+import requests
+
+r = requests.post(
+    "http://localhost:8100/api/v1/prompts/validate",
+    json={"template": 'Return JSON: {"key": "value"}'},
+)
+print(r.json())
+# {
+#   "is_valid": false,
+#   "variables": [],
+#   "warnings": [],
+#   "errors": ["Template has an unescaped curly brace..."]
+# }
+```
+
+This is useful for CI scripts that lint your prompt files before committing them.
+
 ---
 
 ## 1. Hello World — Minimal Example

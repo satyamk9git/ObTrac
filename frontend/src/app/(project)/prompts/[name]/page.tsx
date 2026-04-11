@@ -22,6 +22,14 @@ function PromptDetailContent() {
   const [model, setModel] = useState("");
   const [temperature, setTemperature] = useState("");
 
+  // Editor live validation
+  const [editorValidation, setEditorValidation] = useState<{
+    is_valid: boolean;
+    variables: string[];
+    warnings: string[];
+    errors: string[];
+  } | null>(null);
+
   // Diff state
   const [versionA, setVersionA] = useState<number | null>(null);
   const [versionB, setVersionB] = useState<number | null>(null);
@@ -55,6 +63,25 @@ function PromptDetailContent() {
       .catch(() => {});
   }, []);
 
+  // Live template validation as the user types in the Editor tab
+  useEffect(() => {
+    if (tab !== "editor" || !template.trim()) {
+      setEditorValidation(null);
+      return;
+    }
+    const handle = setTimeout(() => {
+      fetch(`${API}/prompts/validate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ template }),
+      })
+        .then(r => r.json())
+        .then(setEditorValidation)
+        .catch(() => setEditorValidation(null));
+    }, 400);
+    return () => clearTimeout(handle);
+  }, [template, tab]);
+
   const fetchPrompt = () => {
     setLoading(true);
     fetch(`${API}/prompts/${name}?project=${encodeURIComponent(project)}`)
@@ -79,6 +106,10 @@ function PromptDetailContent() {
       alert("Please add a commit message");
       return;
     }
+    if (editorValidation && !editorValidation.is_valid) {
+      alert("Fix the template errors before saving.");
+      return;
+    }
     const res = await fetch(`${API}/prompts/${name}/versions?project=${encodeURIComponent(project)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -93,6 +124,14 @@ function PromptDetailContent() {
     if (res.ok) {
       setCommitMsg("");
       fetchPrompt();
+    } else {
+      const err = await res.json().catch(() => ({}));
+      const detail = err.detail;
+      if (detail && typeof detail === "object" && detail.errors) {
+        alert("Validation errors:\n\n" + detail.errors.join("\n\n"));
+      } else {
+        alert(detail || "Failed to save version");
+      }
     }
   };
 
@@ -269,12 +308,63 @@ function PromptDetailContent() {
             <div className="flex items-center justify-between mb-2">
               <label className="text-sm font-semibold text-gray-700">Template</label>
               <span className="text-xs text-gray-400">
-                Variables auto-detected: {variables.length > 0 ? variables.join(", ") : "none"}
+                Use <code className="text-indigo-600">{`{var}`}</code> for variables · Escape literal braces as <code className="text-indigo-600">{`{{`}</code>/<code className="text-indigo-600">{`}}`}</code>
               </span>
             </div>
             <textarea value={template} onChange={e => setTemplate(e.target.value)} rows={14}
               className="w-full font-mono text-xs bg-gray-900 text-green-400 rounded-lg p-4 outline-none focus:ring-2 focus:ring-indigo-500"
               placeholder="You are a helpful assistant.&#10;&#10;Context: {context}&#10;&#10;Question: {question}&#10;&#10;Answer:" />
+
+            {/* Live validation */}
+            {editorValidation && (
+              <div className="mt-2 space-y-1.5">
+                {editorValidation.errors && editorValidation.errors.length > 0 && (
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-2">
+                    <div className="flex items-start gap-2">
+                      <svg className="w-4 h-4 text-red-600 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                      </svg>
+                      <div className="flex-1">
+                        <p className="text-xs font-semibold text-red-900">Template won't render — fix before saving</p>
+                        {editorValidation.errors.map((e, i) => (
+                          <p key={i} className="text-[11px] text-red-700 mt-0.5">{e}</p>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {editorValidation.errors.length === 0 && editorValidation.warnings && editorValidation.warnings.length > 0 && (
+                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-2">
+                    <div className="flex items-start gap-2">
+                      <svg className="w-4 h-4 text-yellow-600 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      <div className="flex-1">
+                        <p className="text-xs font-semibold text-yellow-900">Looks suspicious — double-check before saving</p>
+                        {editorValidation.warnings.map((w, i) => (
+                          <p key={i} className="text-[11px] text-yellow-700 mt-0.5">{w}</p>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {editorValidation.is_valid && (
+                  <div className="text-[11px] text-gray-500">
+                    <span className="font-semibold text-green-700">✓ Template valid.</span>{" "}
+                    {editorValidation.variables.length > 0 ? (
+                      <>
+                        Detected variables:{" "}
+                        {editorValidation.variables.map((v) => (
+                          <code key={v} className="text-indigo-600 mx-0.5">{`{${v}}`}</code>
+                        ))}
+                      </>
+                    ) : (
+                      <span className="text-gray-400">(No variables detected — this prompt is a static string.)</span>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -296,8 +386,11 @@ function PromptDetailContent() {
               className="input-dark" placeholder="Improved instruction clarity" />
           </div>
 
-          <button onClick={handleSaveNewVersion} disabled={!commitMsg.trim()}
-            className="btn-primary disabled:opacity-50">
+          <button
+            onClick={handleSaveNewVersion}
+            disabled={!commitMsg.trim() || (editorValidation !== null && !editorValidation.is_valid)}
+            className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
+          >
             Save as New Version (v{(activeVersion?.version || 0) + 1})
           </button>
         </div>
