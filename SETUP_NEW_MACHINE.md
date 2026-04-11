@@ -1,73 +1,135 @@
 # Setup ObTrac on a New Machine
 
-The fastest way to get ObTrac running — works for both **fresh installs** and **updating an existing install**.
+The fastest way to get ObTrac running on a fresh machine. Works for both **first-time installs** and **upgrading an existing install**.
+
+---
+
+## Pick a version first
+
+ObTrac maintains two named tags. Pick one based on what the machine is for:
+
+| Tag | When to use |
+|---|---|
+| **`v0.6.1`** ← *recommended* | All the latest features: GLOBAL/PROJECT sidebar, embedder config, async eval, AI insights, Excel-style trace filters, budget→alert mapping, period filter on analytics |
+| **`v0.4.1-stable`** | Frozen pre-v0.6 baseline. Use for CI pinning, regression testing, or rollback |
+
+You can run **both versions on different machines side-by-side** — they're independent installs.
 
 ---
 
 ## Prerequisites
 
-| Tool | Version | Download |
+| Tool | Version | Verify |
 |---|---|---|
-| **Python** | 3.10+ | https://www.python.org/downloads/ |
-| **Node.js** | 18+ | https://nodejs.org/ |
-| **Git** | latest | https://git-scm.com/ |
+| **Python** | 3.10+ | `python --version` |
+| **Node.js** | 18+ | `node --version` |
+| **Git** | latest | `git --version` |
 
-Verify:
-```bash
-python --version
-node --version
-git --version
-```
+If any of those fail, install from:
+- https://www.python.org/downloads/
+- https://nodejs.org/
+- https://git-scm.com/
 
 ---
 
-## Install (or upgrade) — 2 commands
+## Install — three commands
+
+### Latest (v0.6.1)
 
 ```bash
-pip install --upgrade "obtrac[all] @ git+https://github.com/satyamk9git/ObTrac.git"
-obtrac install
+pip install "obtrac[all] @ git+https://github.com/satyamk9git/ObTrac.git@v0.6.1"
+python -m obtrac_sdk.cli install
+python -m obtrac_sdk.cli start
 ```
 
-That's it. These two commands work for **every** scenario:
+### Long-term stable (v0.4.1-stable)
 
-| Scenario | What happens |
-|---|---|
-| **First time on this machine** | pip installs the SDK + all deps. `obtrac install` clones the repo to `~/.obtrac`, runs `npm install`, builds the frontend. |
-| **Upgrading an existing install** | pip detects the new version in `pyproject.toml` and upgrades only the SDK + any new/changed dependencies (existing packages are left alone). `obtrac install` detects `~/.obtrac` is a git repo, runs `git fetch + reset --hard origin/main`, then re-runs `npm install` and rebuilds. **Your `.env` and SQLite database are preserved.** |
-| **Old non-git folder at `~/.obtrac`** | `obtrac install` automatically backs up `.env` and `obtrac.db` to `~/.obtrac_backup/`, wipes the folder, re-clones fresh, and restores both files. |
+```bash
+pip install "obtrac[all] @ git+https://github.com/satyamk9git/ObTrac.git@v0.4.1-stable"
+python -m obtrac_sdk.cli install
+python -m obtrac_sdk.cli start
+```
 
-> **No manual uninstall needed.** Re-running these two commands always brings you to the latest version while keeping your data.
->
-> **Why no `--force-reinstall`?** It would re-download and rebuild every dependency (FastAPI, RAGAS, sentence-transformers, etc.) even ones that haven't changed — slow and wasteful. The `--upgrade` flag plus a version bump in `pyproject.toml` is enough for pip to update only what actually changed. If you ever need to truly nuke and reinstall everything, run `pip uninstall obtrac` first, then the install command above.
+### What each command does
+
+| Step | Command | What happens |
+|---|---|---|
+| 1 | `pip install ...` | Downloads + installs the SDK package and all backend deps from the named tag. About 30-60 seconds depending on cached wheels. |
+| 2 | `python -m obtrac_sdk.cli install` | Clones the project source to `~/.obtrac/`, runs `npm install` for the frontend, and builds the Next.js dashboard. About 2 minutes the first time, faster on upgrades. |
+| 3 | `python -m obtrac_sdk.cli start` | Launches the FastAPI backend on port 8100 and the Next.js dashboard on port 3100 in the background. |
+
+After step 3:
+- **Dashboard**: http://localhost:3100
+- **API docs**: http://localhost:8100/docs
 
 ---
 
-## Start ObTrac
+## Verify the install
 
 ```bash
-obtrac start
+python -c "import obtrac_sdk; print('SDK version:', obtrac_sdk.__version__)"
 ```
 
-Output:
-```
-ObTrac is running!
+You should see:
+- `SDK version: 0.6.1` if you installed the latest
+- `SDK version: 0.4.1` if you installed the stable
 
-  Dashboard:   http://localhost:3100
-  Backend API: http://localhost:8100/docs
-```
+The dashboard's sidebar footer also shows the version.
 
 Open the dashboard:
 ```bash
-obtrac open
+python -m obtrac_sdk.cli open
 ```
 
 ---
 
-## First-time only — configure LLM credentials
+## Upgrading an existing install
 
-After `obtrac install`, create a `.env` file at `~/.obtrac/.env`:
+Whether you're upgrading **v0.4.1 → v0.6.1** or any other tag swap, the flow is the same:
 
-```env
+```bash
+python -m obtrac_sdk.cli stop
+pip install --upgrade --force-reinstall "obtrac[all] @ git+https://github.com/satyamk9git/ObTrac.git@v0.6.1"
+python -m obtrac_sdk.cli install
+python -m obtrac_sdk.cli start
+```
+
+### Why `--force-reinstall`?
+
+Pip caches git installs by version string. Without `--force-reinstall`, switching between tags can be a no-op if pip thinks the package is already at "the right version." Forcing it bypasses that. The dependencies aren't re-downloaded — only the obtrac source itself.
+
+### Your data is safe across upgrades and rollbacks
+
+- **SQLite database** (`~/.obtrac/backend/data/obtrac.db`) is never touched. All traces, prompts, budgets, alert channels, and configs are preserved.
+- **Schema migrations are additive only** — v0.6 adds new columns, v0.4 ignores them.
+- **Your `.env` file** at `~/.obtrac/.env` stays put.
+- **Frontend build** is regenerated by `obtrac install` so it matches whichever version you pulled.
+
+### Verify the migration ran
+
+After starting the backend, check the log for `Schema migration: ...` lines — they confirm new columns were added to the existing SQLite database. Example output when upgrading v0.4.1 → v0.6.1:
+
+```
+INFO:obtrac:Initializing ObTrac database...
+INFO:obtrac:Schema migration: added budgets.alert_channel_ids
+INFO:obtrac:Schema migration: added budgets.last_fired_threshold
+INFO:obtrac:Schema migration: added budgets.last_fired_at
+INFO:obtrac:Schema migration: added eval_jobs (new table)
+INFO:obtrac:Schema migration: added embedder_configs (new table)
+INFO:obtrac:ObTrac backend started successfully
+```
+
+---
+
+## Configure LLM credentials
+
+Two ways:
+
+### Option A — `.env` file (fastest)
+
+After `obtrac install`, the project lives at `~/.obtrac/`. Create the file at `~/.obtrac/.env`:
+
+```bash
 AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
 AZURE_OPENAI_MODEL_NAME=gpt-4o
 AZURE_OPENAI_DEPLOYMENT=gpt-4o
@@ -75,73 +137,50 @@ AZURE_OPENAI_API_KEY=your-api-key-here
 AZURE_OPENAI_API_VERSION=2024-12-01-preview
 ```
 
-Or skip the `.env` and add LLMs through the dashboard at **Settings → LLM Config** after starting.
+### Option B — Dashboard UI (cleaner for multiple LLMs)
 
-> **On upgrades:** your existing `.env` is preserved automatically — you don't need to redo this step.
+Open http://localhost:3100 → **LLM Config** in the global sidebar → **+ Add LLM** → fill in form → check **"Use for Auto-Evaluation"** for the LLM you want RAGAS to use as the judge.
 
 ---
 
-## If `obtrac` command isn't recognized
+## CLI commands
 
-Python's Scripts folder isn't on your PATH. Use the module form instead — it always works:
+| Command | Or use the module form |
+|---|---|
+| `obtrac install` | `python -m obtrac_sdk.cli install` |
+| `obtrac start` | `python -m obtrac_sdk.cli start` |
+| `obtrac stop` | `python -m obtrac_sdk.cli stop` |
+| `obtrac status` | `python -m obtrac_sdk.cli status` |
+| `obtrac open` | `python -m obtrac_sdk.cli open` |
+| `obtrac embedder list` | `python -m obtrac_sdk.cli embedder list` |
+| `obtrac embedder add --name X --provider Y --model Z` | (long form) |
 
+> **Tip**: If `obtrac` is not on PATH after install, the `python -m obtrac_sdk.cli ...` form always works without any path configuration.
+
+### Permanent fix for `obtrac` not on PATH
+
+**Windows:**
+1. Find Python's Scripts folder: `python -c "import sys, os; print(os.path.join(sys.prefix, 'Scripts'))"`
+2. Add it to PATH: `Win + R` → `sysdm.cpl` → **Environment Variables** → User PATH → **New** → paste path → restart terminal
+
+**Mac/Linux:**
 ```bash
-python -m obtrac_sdk.cli install
-python -m obtrac_sdk.cli start
-python -m obtrac_sdk.cli stop
-python -m obtrac_sdk.cli status
-python -m obtrac_sdk.cli open
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
 ```
-
-### Permanent fix on Windows
-
-Find your Scripts folder:
-```powershell
-python -c "import sys, os; print(os.path.join(sys.prefix, 'Scripts'))"
-```
-
-Add it to PATH:
-1. `Win + R` → `sysdm.cpl` → Enter
-2. **Advanced** → **Environment Variables**
-3. Under "User variables", select **Path** → **Edit** → **New** → paste the Scripts path
-4. OK → restart your terminal
-
-### On Mac/Linux
-
-Add to `~/.bashrc` or `~/.zshrc`:
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-```
-Then `source ~/.bashrc`.
 
 ---
 
-## CLI Commands
-
-| Command | Or use | What it does |
-|---|---|---|
-| `obtrac install` | `python -m obtrac_sdk.cli install` | Install / update project files + frontend |
-| `obtrac start` | `python -m obtrac_sdk.cli start` | Start backend + frontend |
-| `obtrac stop` | `python -m obtrac_sdk.cli stop` | Stop running services |
-| `obtrac status` | `python -m obtrac_sdk.cli status` | Check service status |
-| `obtrac open` | `python -m obtrac_sdk.cli open` | Open dashboard in browser |
-
----
-
-## Test your install
+## Test it works
 
 Create `test.py`:
 
 ```python
-from obtrac_sdk import obtrac_config, trace, observe
+from obtrac_sdk import obtrac_config, observe, trace
 
-obtrac_config(
-    project="setup-test",
-    backend_url="http://localhost:8100",
-    user="test-user",
-)
+obtrac_config(project="setup-test", user="me")
 
-@trace(name="hello", span_type="custom")
+@trace(name="hello")
 def hello(name):
     return f"Hello, {name}!"
 
@@ -150,8 +189,8 @@ def pipeline(name):
     return hello(name)
 
 if __name__ == "__main__":
-    print(pipeline("World"))
-    print("Check http://localhost:3100 for your trace")
+    print(pipeline("ObTrac"))
+    print("Open http://localhost:3100 and look for 'setup-test' project")
 ```
 
 Run it:
@@ -159,7 +198,7 @@ Run it:
 python test.py
 ```
 
-Open http://localhost:3100 → see your trace under the `setup-test` project.
+Open http://localhost:3100 → **Projects** → click `setup-test` → click **Traces** → see your trace.
 
 ---
 
@@ -167,73 +206,108 @@ Open http://localhost:3100 → see your trace under the `setup-test` project.
 
 | What | Path |
 |---|---|
-| Project files | `~/.obtrac/` |
-| `.env` | `~/.obtrac/.env` |
+| Project source files | `~/.obtrac/` |
+| `.env` credentials | `~/.obtrac/.env` |
 | SQLite database | `~/.obtrac/backend/data/obtrac.db` |
 | Frontend build | `~/.obtrac/frontend/.next/` |
-| Backups (auto) | `~/.obtrac_backup/` |
-| PID file | `~/.obtrac_pids.json` |
+| PID file (running processes) | `~/.obtrac_pids.json` |
+| Backup of old SQLite (if reinstall wiped it) | `~/.obtrac_backup/` |
 
 ---
 
 ## Alternative: Clone first (for code modifications)
 
-If you want to edit ObTrac itself:
+If you want to **edit ObTrac itself** instead of just using it:
 
 ```bash
 git clone https://github.com/satyamk9git/ObTrac.git
 cd ObTrac
+git checkout v0.6.1     # or v0.4.1-stable
 pip install -e ".[all]"
 obtrac install
+obtrac start
 ```
 
-In this mode, `obtrac install` skips the clone/update logic and uses your local checkout — you manage updates with `git pull` yourself.
+In this mode, `obtrac install` skips the auto-clone step and uses your local checkout. You manage updates with `git checkout <new-tag>` followed by `obtrac install` to rebuild.
 
 ---
 
 ## Troubleshooting
 
-### `npm install` fails
-- Ensure Node.js 18+: `node --version`
-- Clear cache: `npm cache clean --force`
-- Delete `~/.obtrac/frontend/node_modules` and re-run `obtrac install`
+### `obtrac: command not found`
+Use `python -m obtrac_sdk.cli ...` instead. Same functionality, no PATH dependency.
 
-### Port 8100 / 3100 already in use
-```bash
-obtrac stop
-```
-Then start again. If that doesn't help, kill manually:
+### Backend won't start — port 8100 in use
 ```bash
 # Windows
 netstat -ano | findstr :8100
 taskkill /PID <pid> /F
+
+# Linux/Mac
+lsof -i :8100
+kill -9 <pid>
 ```
 
-### `.env` not loading
-Make sure it lives at `~/.obtrac/.env` (project root), **not** inside `backend/` or `test_app/`.
+Or run `obtrac stop` first.
 
-### Auto-eval not working
-1. Open http://localhost:3100/llm-config
-2. Add an LLM with **Use for Auto-Evaluation** checked
-3. In your code: `obtrac_config(..., auto_eval=True)`
+### Frontend shows blank page or stale layout after upgrade
+Hard-reload: **`Ctrl+Shift+R`** (Windows/Linux) or **`Cmd+Shift+R`** (Mac).
+
+If that doesn't fix it, force-rebuild:
+```bash
+cd ~/.obtrac/frontend
+rm -rf .next node_modules
+npm install
+npx next build
+obtrac stop && obtrac start
+```
+
+### `ImportError: cannot import name 'obtrac_config'`
+Stale Python cache. Run:
+```bash
+find . -name __pycache__ -exec rm -rf {} +
+```
+Then re-run your script. (On Windows: `for /d /r . %d in (__pycache__) do @rd /s/q "%d"`)
+
+### Auto-eval shows "failed"
+1. Open **LLM Config** → confirm at least one LLM has **"Use for Auto-Evaluation"** checked
+2. Try `answer_relevancy` first — it's the most reliable RAGAS metric
+3. Check the backend log for the actual error (it's now logged at WARNING level since v0.6)
+
+### `npm install` fails on `obtrac install`
+- Verify Node.js 18+: `node --version`
+- Clear cache: `npm cache clean --force`
+- Delete `~/.obtrac/frontend/node_modules` and retry
+
+### Pip says "Requirement already satisfied" but the version is wrong
+Use `--force-reinstall`:
+```bash
+pip install --upgrade --force-reinstall "obtrac[all] @ git+https://github.com/satyamk9git/ObTrac.git@v0.6.1"
+```
 
 ---
 
-## Optional extras
+## Migrating data between machines
 
-The `[all]` extra in the pip command above already pulls in everything:
-RAGAS, MLflow, Streamlit, FAISS, sentence-transformers, LangGraph, LangChain.
+Both machines run independent SQLite databases. To copy traces from one to the other:
 
-If you want a leaner install, swap `[all]` for one of:
-- `[ragas]` — RAGAS evaluation only
-- `[ui]` — Streamlit + FAISS + sentence-transformers (test apps)
-- `[agents]` — LangGraph + LangChain
-- (no extra) — SDK + backend only
+```bash
+# On the source machine
+cp ~/.obtrac/backend/data/obtrac.db /tmp/obtrac.db
+# Transfer /tmp/obtrac.db to the destination machine via scp/USB/etc.
+
+# On the destination machine
+python -m obtrac_sdk.cli stop
+cp /path/to/transferred/obtrac.db ~/.obtrac/backend/data/obtrac.db
+python -m obtrac_sdk.cli start
+```
+
+The auto-migration on backend startup will add any missing columns if the schemas differ between source and destination versions.
 
 ---
 
-## Next steps
+## Going further
 
-- [README.md](README.md) — full feature documentation
-- [EXAMPLES.md](EXAMPLES.md) — code patterns and edge cases
-- `~/.obtrac/test_app/` — Streamlit examples (RAG, agents, LangChain, LangGraph)
+- [README.md](README.md) — full feature documentation and SDK reference
+- [EXAMPLES.md](EXAMPLES.md) — code recipes for RAG, agents, LangChain, LangGraph, Google ADK
+- [github.com/satyamk9git/ObTrac](https://github.com/satyamk9git/ObTrac) — issues, PRs, releases

@@ -2,8 +2,11 @@
 
 A complete cookbook of how to use ObTrac with real code examples, edge cases, and test scenarios.
 
+> **Reading this on v0.6.1?** Jump to the [What's New in v0.6](#whats-new-in-v06) section for the new features (auto-create project, async eval, AI insights, prompt regen, period filters).
+
 ## Table of Contents
 
+0. [What's New in v0.6](#whats-new-in-v06)
 1. [Hello World — Minimal Example](#1-hello-world--minimal-example)
 2. [Basic RAG Pipeline](#2-basic-rag-pipeline)
 3. [Multi-Agent System](#3-multi-agent-system)
@@ -19,6 +22,206 @@ A complete cookbook of how to use ObTrac with real code examples, edge cases, an
 13. [Error Handling](#13-error-handling)
 14. [Edge Cases](#14-edge-cases)
 15. [Test Scenarios](#15-test-scenarios)
+
+---
+
+## What's New in v0.6
+
+This section covers the SDK and dashboard features added between v0.4.1-stable and v0.6.1. Skip this section if you only need the basic recipes — they all still work.
+
+### 1. Auto-create project from `obtrac_config()`
+
+Before v0.6, your project only appeared in the dashboard *after* you logged the first trace. Now `obtrac_config()` POSTs to the backend on init, so the project shows up immediately.
+
+```python
+from obtrac_sdk import obtrac_config
+
+obtrac_config(
+    project="my-new-project",     # ← appears in dashboard right away
+    backend_url="http://localhost:8100",
+    user="satyam",
+    auto_create_project=True,     # default — set to False if you want to skip the auto-POST
+)
+```
+
+The call is **idempotent** (existing projects are returned, not duplicated), has a **2-second timeout**, and **silently fails** if the backend is unreachable so it can't break offline scripts.
+
+### 2. Async evaluation — eval keeps running when you navigate away
+
+Before v0.6, kicking off a multi-LLM RAGAS evaluation locked the trace detail page until it finished (30+ seconds). Navigate away → eval was canceled.
+
+Now when you click **Evaluate**, the dashboard:
+1. POSTs to `/evaluation/run-multi-llm-async` and gets back a `job_id` in <100ms
+2. Shows an indigo banner: *"You can navigate away — the evaluation will keep running"*
+3. Polls `/evaluation/jobs/{job_id}` every 2s
+4. The trace page auto-detects in-flight jobs on mount, so reloading or coming back later picks up the spinner
+
+A **"running evals" badge** in the top bar polls every 5s and shows count + dropdown of active jobs across all projects. Click any job → jump to the trace.
+
+### 3. AI insights at three levels
+
+| Level | Where | Endpoint |
+|---|---|---|
+| **Per-trace** | Click any metric on a trace → Metric Explainer modal | `POST /explain/metric` |
+| **Per-project** | Metrics > Overview → "Generate Analysis" | `POST /explain/project-metrics` |
+| **Per-correlation** | Metrics > Correlation → "Analyze Metrics" | `POST /explain/correlation` |
+
+All three use your auto-eval LLM as the analyst, return structured JSON (verdict, top issues, root causes, code snippet fixes), and are cached 10 minutes per project.
+
+Example payload from `POST /explain/project-metrics`:
+
+```json
+{
+  "project": "langgraph-agent",
+  "evaluated_traces": 14,
+  "worst_metric": "answer_correctness",
+  "insights": {
+    "health": "critical",
+    "headline": "The RAG system is frequently producing incorrect answers despite faithful use of context.",
+    "top_issues": [
+      {
+        "metric": "answer_correctness",
+        "severity": "high",
+        "pattern": "Answers often address a different plausible question from the same document",
+        "root_cause": "Retrieval is fetching the right document but the LLM picks the wrong section"
+      }
+    ],
+    "highest_leverage_fix": {
+      "title": "Add a re-ranker between retrieval and generation",
+      "description": "...",
+      "expected_impact": "answer_correctness from 28.7% → ~65-75%",
+      "code_or_config_example": "from cohere import Client\nclient.rerank(query=q, documents=chunks)"
+    }
+  }
+}
+```
+
+### 4. AI prompt regeneration with edge-case guidance
+
+When you merge multiple prompt versions, the merge UI now has an optional **"Regenerate with extra guidance"** textarea. Examples of guidance the LLM will respect:
+
+- *"Make sure the prompt handles empty context gracefully"*
+- *"Output must be valid JSON"*
+- *"Add a constraint to never mention dates"*
+- *"Preserve the explicit 'use only provided context' rule from v3"*
+
+Backend accepts an `extra_instructions` field on `POST /prompts/{name}/merge`:
+
+```python
+import requests
+
+requests.post(
+    "http://localhost:8100/api/v1/prompts/rag_answer/merge",
+    json={
+        "versions": [2, 3, 4],
+        "extra_instructions": "Output must be exactly 3 sentences, no more.",
+    },
+)
+```
+
+### 5. Excel-style trace filters
+
+The **Traces** page now has Excel-like column-header dropdowns:
+
+- **Trace ID, Pipeline, User, Status, Spans** → multi-select with search box
+- **Latency** → sort asc/desc
+- **Time** → sort asc/desc + From/To date range picker
+
+Filters apply client-side for instant response. The page fetches the most recent 200 traces.
+
+This is purely a UI feature — no SDK changes. But if you have a lot of traces, you'll feel it.
+
+### 6. Period filter on Analytics
+
+The **Analytics** page now has a top-right toggle: **Today / This Week / This Month / Lifetime**. The backend endpoints accept a `period` query param:
+
+```bash
+curl "http://localhost:8100/api/v1/analytics/tokens?project=my-app&period=daily"
+curl "http://localhost:8100/api/v1/analytics/cost/over-time?project=my-app&period=monthly"
+```
+
+Valid values: `daily`, `weekly`, `monthly`, `lifetime`. Default is `lifetime`.
+
+Period boundaries:
+- **Daily**: midnight UTC of today
+- **Weekly**: Monday 00:00 UTC of this week
+- **Monthly**: 1st 00:00 UTC of this month
+- **Lifetime**: no filter
+
+### 7. Budget ↔ alert channel mapping with de-dup
+
+Before v0.6, budgets and alert channels were connected by **convention** — channels listened for trigger names like `budget_50` / `budget_80` / `budget_100`, and any project-matching channel that listened for the right name would fire. Easy to set up wrong, easy to miss.
+
+Now budgets have an explicit `alert_channel_ids` list. The flow is:
+
+```python
+import requests
+
+# Step 1: Create the alert channel
+channel = requests.post("http://localhost:8100/api/v1/alerts/channels", json={
+    "name": "Slack #ai-alerts",
+    "channel_type": "slack",
+    "config": {"url": "https://hooks.slack.com/services/..."},
+    "project": "all",
+}).json()
+
+# Step 2: Map the channel to a budget
+requests.put(f"http://localhost:8100/api/v1/budgets/{budget_id}", json={
+    "alert_channel_ids": [channel["id"]],
+})
+
+# Now when traces push spend across the budget's thresholds (50, 80, 100),
+# Slack receives a message — only ONCE per threshold per period.
+```
+
+The **de-dup state** (`last_fired_threshold`, `last_fired_at`) prevents the same threshold from firing twice in one period. A budget at 84% won't spam every trace — it fires once at 80% and stays quiet until you cross 100% or the period rolls over.
+
+### 8. Embedder Config + global semantic GT matching
+
+Before v0.6, semantic ground-truth matching used a hard-coded local `sentence-transformers/all-MiniLM-L6-v2` model. Now you configure your embedder in **Embedder Config**:
+
+```bash
+# Add an OpenAI embedder via the CLI
+obtrac embedder add \
+  --name openai-large \
+  --provider openai \
+  --model text-embedding-3-large \
+  --api-key sk-... \
+  --default
+
+# Test it works
+obtrac embedder test openai-large
+```
+
+Or use the dashboard at http://localhost:3100/embedder.
+
+The semantic GT matcher reads from this config automatically. Cache key includes the embedder ID, so switching defaults invalidates stale vectors.
+
+### 9. Better trace logging error visibility
+
+Previously, when the SDK couldn't reach the backend (network error, 500 response, etc.), it logged at `DEBUG` level — silently swallowed by the default Python logger config. Users wondered why traces weren't showing up.
+
+Now those failures log at `WARNING`:
+
+```
+WARNING:obtrac:ObTrac backend rejected trace (HTTP 500) at http://localhost:8100/api/v1/traces — body: {"error":"OperationalError","message":"no such column: traces.session_id","path":"/api/v1/traces"}
+```
+
+The backend also has a global exception handler that returns the actual error type and message in 500 responses (instead of FastAPI's generic "Internal Server Error"). So the SDK warning is actually useful.
+
+### 10. Auto-migration on startup
+
+When you upgrade ObTrac, the new version's models may have new columns the old SQLite database doesn't have. Previously this would crash on the first INSERT. Now `init_db()` calls `_add_missing_columns()` which walks every model, compares against the live schema, and runs `ALTER TABLE ADD COLUMN` for anything missing.
+
+It's **idempotent** and **additive only** (never drops or renames). You'll see log lines on the next backend startup after an upgrade:
+
+```
+INFO:obtrac:Schema migration: added budgets.alert_channel_ids
+INFO:obtrac:Schema migration: added budgets.last_fired_threshold
+INFO:obtrac:Schema migration: added budgets.last_fired_at
+```
+
+This is what makes the v0.4.1-stable → v0.6.1 upgrade safe without any manual SQL.
 
 ---
 
