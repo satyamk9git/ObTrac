@@ -2,14 +2,18 @@
 Evaluation API - Run RAGAS metrics on traces, with or without ground truth.
 """
 
+import threading
+import uuid
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
 import logging
 
-from app.db.database import get_db
-from app.db.models import TraceRecord, GroundTruthRecord, LLMConfigRecord
+from app.db.database import get_db, SessionLocal
+from app.db.models import TraceRecord, GroundTruthRecord, LLMConfigRecord, EvalJobRecord
 
 logger = logging.getLogger("obtrac")
 
@@ -513,15 +517,37 @@ class MultiLLMEvalRequest(BaseModel):
     dataset_name: Optional[str] = None  # Pick GT from a saved dataset (auto-match by question)
 
 
-@router.post("/run-multi-llm")
-def run_multi_llm_evaluation(req: MultiLLMEvalRequest, db: Session = Depends(get_db)):
-    """
-    Run RAGAS evaluation using multiple LLMs as judges.
-    Returns per-LLM metrics comparison + detailed recommendations.
-    """
-    trace = db.query(TraceRecord).filter(TraceRecord.trace_id == req.trace_id).first()
+def _execute_multi_llm_eval(
+    db: Session,
+    trace_id: str,
+    metrics: list[str],
+    judge_llm_config_ids: list[str],
+    ground_truth: Optional[str],
+    dataset_name: Optional[str],
+    job: Optional[EvalJobRecord] = None,
+) -> dict:
+    """Core synchronous eval logic. Used by both the sync endpoint and the
+    background-thread async runner. If `job` is provided, progress messages
+    are written to the job row so the frontend can poll status."""
+
+    def _set_progress(msg: str):
+        if job is not None:
+            job.progress_message = msg
+            db.commit()
+
+    trace = db.query(TraceRecord).filter(TraceRecord.trace_id == trace_id).first()
     if not trace:
         raise HTTPException(status_code=404, detail="Trace not found")
+
+    # Mock the request shape for the rest of the existing flow
+    class _Req:
+        pass
+    req = _Req()
+    req.trace_id = trace_id
+    req.metrics = metrics
+    req.judge_llm_config_ids = judge_llm_config_ids
+    req.ground_truth = ground_truth
+    req.dataset_name = dataset_name
 
     # Ground truth — resolution priority:
     # 1. Explicit text in req.ground_truth
@@ -596,11 +622,14 @@ def run_multi_llm_evaluation(req: MultiLLMEvalRequest, db: Session = Depends(get
 
     # Run evaluation for EACH LLM
     llm_results = []
-    for llm_cfg in llm_configs:
+    for idx, llm_cfg in enumerate(llm_configs):
+        _set_progress(f"Evaluating with {llm_cfg.name} ({idx+1}/{len(llm_configs)})...")
         llm_result = _run_single_llm_eval(
             trace, llm_cfg, runnable_metrics, contexts, ground_truth
         )
         llm_results.append(llm_result)
+
+    _set_progress("Generating recommendations...")
 
     # Generate detailed recommendations
     recommendations = _generate_detailed_recommendations(
@@ -628,6 +657,184 @@ def run_multi_llm_evaluation(req: MultiLLMEvalRequest, db: Session = Depends(get
         "recommendations": recommendations,
         "ground_truth_used": bool(ground_truth),
     }
+
+
+@router.post("/run-multi-llm")
+def run_multi_llm_evaluation(req: MultiLLMEvalRequest, db: Session = Depends(get_db)):
+    """Synchronous multi-LLM RAGAS evaluation. Blocks until done.
+    Use the async variant for long-running evals."""
+    return _execute_multi_llm_eval(
+        db=db,
+        trace_id=req.trace_id,
+        metrics=req.metrics,
+        judge_llm_config_ids=req.judge_llm_config_ids,
+        ground_truth=req.ground_truth,
+        dataset_name=req.dataset_name,
+    )
+
+
+# =============================================
+# Async multi-LLM evaluation (background jobs)
+# =============================================
+
+
+def _run_eval_job_in_background(job_id: str, params: dict):
+    """Daemon-thread worker. Owns its own DB session — never reuse a request session."""
+    db = SessionLocal()
+    try:
+        job = db.query(EvalJobRecord).filter(EvalJobRecord.id == job_id).first()
+        if not job:
+            return
+
+        job.status = "running"
+        job.started_at = datetime.utcnow()
+        job.progress_message = "Starting evaluation..."
+        db.commit()
+
+        try:
+            result = _execute_multi_llm_eval(
+                db=db,
+                trace_id=params["trace_id"],
+                metrics=params["metrics"],
+                judge_llm_config_ids=params["judge_llm_config_ids"],
+                ground_truth=params.get("ground_truth"),
+                dataset_name=params.get("dataset_name"),
+                job=job,
+            )
+            job.status = "completed"
+            job.result = result
+            job.progress_message = "Done"
+        except HTTPException as e:
+            job.status = "failed"
+            job.error = f"{e.status_code}: {e.detail}"
+        except Exception as e:
+            job.status = "failed"
+            job.error = f"{type(e).__name__}: {str(e)[:500]}"
+            logger.exception(f"Eval job {job_id} crashed")
+        finally:
+            job.finished_at = datetime.utcnow()
+            db.commit()
+    finally:
+        db.close()
+
+
+@router.post("/run-multi-llm-async", status_code=202)
+def run_multi_llm_async(req: MultiLLMEvalRequest, db: Session = Depends(get_db)):
+    """Queue a RAGAS evaluation as a background job. Returns immediately
+    with the job ID. The actual eval runs in a daemon thread and survives
+    page navigation / browser close.
+
+    Poll GET /evaluation/jobs/{id} to track progress."""
+    # Validate the trace exists before queueing
+    trace = db.query(TraceRecord).filter(TraceRecord.trace_id == req.trace_id).first()
+    if not trace:
+        raise HTTPException(status_code=404, detail="Trace not found")
+
+    job_id = str(uuid.uuid4())
+    job = EvalJobRecord(
+        id=job_id,
+        trace_id=req.trace_id,
+        project=trace.project,
+        status="queued",
+        metrics=req.metrics,
+        judge_llm_config_ids=req.judge_llm_config_ids,
+        dataset_name=req.dataset_name,
+        ground_truth=req.ground_truth,
+        progress_message="Queued",
+    )
+    db.add(job)
+    db.commit()
+
+    # Fire-and-forget background thread
+    params = {
+        "trace_id": req.trace_id,
+        "metrics": req.metrics,
+        "judge_llm_config_ids": req.judge_llm_config_ids,
+        "ground_truth": req.ground_truth,
+        "dataset_name": req.dataset_name,
+    }
+    threading.Thread(
+        target=_run_eval_job_in_background,
+        args=(job_id, params),
+        daemon=True,
+    ).start()
+
+    return {
+        "job_id": job_id,
+        "status": "queued",
+        "trace_id": req.trace_id,
+        "message": "Evaluation queued. Poll /evaluation/jobs/{job_id} for status.",
+    }
+
+
+def _job_to_dict(job: EvalJobRecord) -> dict:
+    return {
+        "id": job.id,
+        "trace_id": job.trace_id,
+        "project": job.project,
+        "status": job.status,
+        "metrics": job.metrics or [],
+        "judge_llm_config_ids": job.judge_llm_config_ids or [],
+        "dataset_name": job.dataset_name,
+        "progress_message": job.progress_message,
+        "result": job.result,
+        "error": job.error,
+        "created_at": job.created_at.isoformat() if job.created_at else None,
+        "started_at": job.started_at.isoformat() if job.started_at else None,
+        "finished_at": job.finished_at.isoformat() if job.finished_at else None,
+    }
+
+
+@router.get("/jobs")
+def list_eval_jobs(
+    status: Optional[str] = Query(None, description="Filter by status: queued, running, completed, failed, cancelled"),
+    project: Optional[str] = Query(None),
+    trace_id: Optional[str] = Query(None),
+    limit: int = Query(50, le=200),
+    db: Session = Depends(get_db),
+):
+    """List eval jobs with optional filters. Used by the running-evals badge."""
+    q = db.query(EvalJobRecord)
+    if status:
+        # Allow comma-separated: ?status=queued,running
+        statuses = [s.strip() for s in status.split(",") if s.strip()]
+        q = q.filter(EvalJobRecord.status.in_(statuses))
+    if project:
+        q = q.filter(EvalJobRecord.project == project)
+    if trace_id:
+        q = q.filter(EvalJobRecord.trace_id == trace_id)
+    rows = q.order_by(EvalJobRecord.created_at.desc()).limit(limit).all()
+    return {
+        "jobs": [_job_to_dict(r) for r in rows],
+        "count": len(rows),
+    }
+
+
+@router.get("/jobs/{job_id}")
+def get_eval_job(job_id: str, db: Session = Depends(get_db)):
+    """Get a single eval job by ID."""
+    job = db.query(EvalJobRecord).filter(EvalJobRecord.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Eval job not found")
+    return _job_to_dict(job)
+
+
+@router.delete("/jobs/{job_id}")
+def cancel_eval_job(job_id: str, db: Session = Depends(get_db)):
+    """Mark a queued job as cancelled. Cannot cancel a job that's already
+    running — Python threads can't be safely killed mid-execution. The job
+    will still complete and write its result; the status flag is informational."""
+    job = db.query(EvalJobRecord).filter(EvalJobRecord.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Eval job not found")
+    if job.status in ("completed", "failed", "cancelled"):
+        return {"status": job.status, "message": "Already finished"}
+    if job.status == "running":
+        return {"status": "running", "message": "Cannot cancel — already running. It will finish shortly."}
+    job.status = "cancelled"
+    job.finished_at = datetime.utcnow()
+    db.commit()
+    return {"status": "cancelled"}
 
 
 def _run_single_llm_eval(trace, llm_cfg, metrics, contexts, ground_truth) -> dict:

@@ -4,6 +4,7 @@ import { useSearchParams } from "next/navigation";
 import { Suspense } from "react";
 import Sidebar from "@/components/Sidebar";
 import SearchBar from "@/components/SearchBar";
+import RunningEvalsBadge from "@/components/RunningEvalsBadge";
 
 function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
   const searchParams = useSearchParams();
@@ -14,7 +15,8 @@ function ProjectLayoutInner({ children }: { children: React.ReactNode }) {
       <Sidebar project={project} />
       <main className="flex-1 ml-60">
         {/* Top bar */}
-        <div className="sticky top-0 z-20 bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-end">
+        <div className="sticky top-0 z-20 bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-end gap-3">
+          <RunningEvalsBadge />
           <SearchBar project={project} />
         </div>
         <div className="p-6 animate-fade-in">

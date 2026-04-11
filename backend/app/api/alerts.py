@@ -21,11 +21,13 @@ logger = logging.getLogger("obtrac")
 router = APIRouter(prefix="/alerts", tags=["alerts"])
 
 
-# Available trigger event types
+# Available trigger event types — for non-budget events.
+# Budget alerts (50/80/100) are now wired per-budget via the explicit
+# `BudgetRecord.alert_channel_ids` mapping, so they don't appear here anymore.
+# The `budget_*` event types are still RECEIVED by the delivery code path
+# (legacy fallback when a budget has no explicit channel mapping), they're
+# just no longer shown as trigger options on the channel form.
 TRIGGER_TYPES = {
-    "budget_50": "Budget 50% used",
-    "budget_80": "Budget 80% used",
-    "budget_100": "Budget exceeded (100%)",
     "metric_low": "Metric drops below threshold",
     "error_spike": "Error rate spike",
     "trace_failed": "Any trace failed",
@@ -112,9 +114,45 @@ def delete_channel(channel_id: str, db: Session = Depends(get_db)):
     channel = db.query(AlertChannelRecord).filter(AlertChannelRecord.id == channel_id).first()
     if not channel:
         raise HTTPException(404, "Channel not found")
+
+    # Cascade: remove this channel ID from any budget that references it
+    budgets_with_channel = db.query(BudgetRecord).filter(
+        BudgetRecord.alert_channel_ids.isnot(None)
+    ).all()
+    cleaned = 0
+    for b in budgets_with_channel:
+        ids = b.alert_channel_ids or []
+        if channel_id in ids:
+            b.alert_channel_ids = [x for x in ids if x != channel_id]
+            cleaned += 1
+
     db.delete(channel)
     db.commit()
-    return {"status": "deleted"}
+    return {"status": "deleted", "budgets_unmapped": cleaned}
+
+
+@router.get("/channels/{channel_id}/budgets")
+def list_budgets_for_channel(channel_id: str, db: Session = Depends(get_db)):
+    """Return the budgets that fire alerts to this channel — used by the
+    Alerts page to show 'Subscribed by N budgets' badge."""
+    channel = db.query(AlertChannelRecord).filter(AlertChannelRecord.id == channel_id).first()
+    if not channel:
+        raise HTTPException(404, "Channel not found")
+
+    # JSON column doesn't support indexed search in SQLite, so scan in Python
+    candidates = db.query(BudgetRecord).filter(BudgetRecord.alert_channel_ids.isnot(None)).all()
+    matched = [
+        {
+            "id": b.id,
+            "name": b.name,
+            "project": b.project,
+            "period": b.period,
+            "amount_usd": b.amount_usd,
+        }
+        for b in candidates
+        if channel_id in (b.alert_channel_ids or [])
+    ]
+    return {"channel_id": channel_id, "count": len(matched), "budgets": matched}
 
 
 @router.post("/channels/{channel_id}/test")
@@ -296,39 +334,93 @@ def check_and_fire_alerts(project: str, event_type: str, payload: dict, db: Sess
 def check_budget_alerts(project: str, db: Session):
     """
     After a trace is added, check if any budget thresholds are crossed.
-    Fires alerts on the channels listening for budget_50/80/100.
+
+    Per-budget channel routing:
+      - If `budget.alert_channel_ids` is non-empty, fires alerts ONLY to those
+        explicit channels (the new model).
+      - Otherwise falls back to the legacy behavior: fire to any channel in
+        the project that has the matching `budget_X` trigger.
+
+    De-dup state:
+      - `budget.last_fired_threshold` records the highest threshold already
+        notified in the current period. We only fire when crossing to a NEW
+        higher threshold, so a budget at 84% doesn't spam every trace.
+      - The state resets automatically when the period rolls over (we detect
+        this by comparing `last_fired_at` to the current period_start).
     """
+    from app.api.budgets import _get_period_start
+
     budgets = db.query(BudgetRecord).filter(
         BudgetRecord.project == project,
         BudgetRecord.is_active == True,
     ).all()
 
     for budget in budgets:
-        spent = _calculate_spent(db, budget.project, budget.period)
         if budget.amount_usd <= 0:
             continue
+
+        spent = _calculate_spent(db, budget.project, budget.period)
         used_pct = spent / budget.amount_usd * 100
 
-        # Check thresholds in descending order — fire only the highest crossed
+        # Reset de-dup state if we're in a new period
+        period_start = _get_period_start(budget.period)
+        if budget.last_fired_at and budget.last_fired_at < period_start:
+            budget.last_fired_threshold = None
+            budget.last_fired_at = None
+            db.commit()
+
+        # Find the highest threshold that's been crossed
         thresholds = sorted(budget.alert_thresholds or [50, 80, 100], reverse=True)
+        crossed: Optional[int] = None
         for t in thresholds:
             if used_pct >= t:
-                event = f"budget_{t}"
-                severity = "critical" if t >= 100 else "warning" if t >= 80 else "info"
-                msg = f"Budget '{budget.name}' for project '{project}' is at {used_pct:.1f}% (${spent:.2f} / ${budget.amount_usd:.2f})"
-                check_and_fire_alerts(
-                    project=project,
-                    event_type=event,
-                    payload={
-                        "project": project,
-                        "budget_name": budget.name,
-                        "period": budget.period,
-                        "amount_usd": budget.amount_usd,
-                        "spent_usd": round(spent, 4),
-                        "used_pct": round(used_pct, 1),
-                    },
-                    db=db,
-                    severity=severity,
-                    message=msg,
-                )
-                break  # Only fire highest threshold
+                crossed = t
+                break
+
+        if crossed is None:
+            continue
+
+        # De-dup: skip if we've already fired this threshold (or higher) this period
+        if budget.last_fired_threshold is not None and crossed <= budget.last_fired_threshold:
+            continue
+
+        event = f"budget_{crossed}"
+        severity = "critical" if crossed >= 100 else "warning" if crossed >= 80 else "info"
+        msg = (
+            f"Budget '{budget.name}' for project '{project}' is at {used_pct:.1f}% "
+            f"(${spent:.2f} / ${budget.amount_usd:.2f})"
+        )
+        payload = {
+            "project": project,
+            "budget_id": budget.id,
+            "budget_name": budget.name,
+            "period": budget.period,
+            "amount_usd": budget.amount_usd,
+            "spent_usd": round(spent, 4),
+            "used_pct": round(used_pct, 1),
+            "threshold_crossed": crossed,
+        }
+
+        # Explicit per-budget mapping (new model)
+        if budget.alert_channel_ids:
+            channels = db.query(AlertChannelRecord).filter(
+                AlertChannelRecord.id.in_(budget.alert_channel_ids),
+                AlertChannelRecord.is_active == True,
+            ).all()
+            for ch in channels:
+                _deliver_alert(ch, event, severity, msg, payload, db)
+        else:
+            # Legacy behavior: trigger-name matching
+            check_and_fire_alerts(
+                project=project,
+                event_type=event,
+                payload=payload,
+                db=db,
+                severity=severity,
+                message=msg,
+            )
+
+        # Record the de-dup state
+        budget.last_fired_threshold = crossed
+        budget.last_fired_at = datetime.utcnow()
+        db.commit()

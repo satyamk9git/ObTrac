@@ -128,6 +128,57 @@ class LLMConfigRecord(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class EvalJobRecord(Base):
+    """An evaluation run that may take a while. Allows the frontend to fire
+    and forget — the eval continues in a backend daemon thread even if the
+    user navigates to a different page or closes the browser.
+
+    Status lifecycle: queued → running → completed | failed | cancelled
+    """
+    __tablename__ = "eval_jobs"
+
+    id = Column(String, primary_key=True)
+    trace_id = Column(String, index=True)
+    project = Column(String, index=True, default="default")
+    status = Column(String, default="queued")  # queued, running, completed, failed, cancelled
+    metrics = Column(JSON, default=list)        # ["faithfulness", ...]
+    judge_llm_config_ids = Column(JSON, default=list)
+    dataset_name = Column(String, nullable=True)
+    ground_truth = Column(Text, nullable=True)
+
+    result = Column(JSON, nullable=True)        # full multi-LLM result payload when done
+    error = Column(Text, nullable=True)
+    progress_message = Column(String, default="")  # e.g. "Running faithfulness on Az Judge..."
+
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    started_at = Column(DateTime, nullable=True)
+    finished_at = Column(DateTime, nullable=True)
+
+
+class EmbedderConfigRecord(Base):
+    """Globally-configured embedding model. Used by semantic ground truth
+    matching, retrieval helpers, etc. Mirrors the LLM Config pattern: a
+    small set of named configs, one marked as default."""
+    __tablename__ = "embedder_configs"
+
+    id = Column(String, primary_key=True)
+    name = Column(String, unique=True, index=True)
+    provider = Column(String, default="sentence_transformers")
+    # Common values: sentence_transformers, openai, azure_openai, cohere, vertex, huggingface, ollama
+    model_id = Column(String, default="all-MiniLM-L6-v2")
+    dimensions = Column(Integer, nullable=True)  # informational, e.g. 384 for MiniLM, 1536 for ada-002
+
+    api_key = Column(String, nullable=True)
+    api_base = Column(String, nullable=True)
+    api_version = Column(String, nullable=True)
+    azure_deployment = Column(String, nullable=True)
+
+    is_active = Column(Boolean, default=True)
+    is_default = Column(Boolean, default=False)  # only one at a time
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class BudgetRecord(Base):
     __tablename__ = "budgets"
 
@@ -138,6 +189,17 @@ class BudgetRecord(Base):
     amount_usd = Column(Float, default=100.0)
     alert_thresholds = Column(JSON, default=lambda: [50, 80, 100])  # percent thresholds
     is_active = Column(Boolean, default=True)
+
+    # Explicit per-budget alert channel routing. List of AlertChannelRecord IDs.
+    # Empty list = no notifications fire for this budget.
+    alert_channel_ids = Column(JSON, default=list)
+
+    # De-dup state — prevents firing the same threshold over and over as
+    # additional traces land on top of an already-crossed threshold.
+    # Reset when the budget's period rolls over (handled in check_budget_alerts).
+    last_fired_threshold = Column(Integer, nullable=True)
+    last_fired_at = Column(DateTime, nullable=True)
+
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

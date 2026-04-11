@@ -86,7 +86,7 @@ def _add_missing_columns():
 def init_db():
     from app.db.models import (
         ProjectRecord, TraceRecord, SpanRecord, LLMConfigRecord,
-        GroundTruthRecord, AnnotationRecord,
+        EmbedderConfigRecord, EvalJobRecord, GroundTruthRecord, AnnotationRecord,
     )
     # 1. Create any tables that don't exist yet
     Base.metadata.create_all(bind=engine)

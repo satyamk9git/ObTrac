@@ -25,6 +25,8 @@ function TraceDetailContent() {
   const [evalRunning, setEvalRunning] = useState(false);
   const [evalResult, setEvalResult] = useState<any>(null);
   const [evalTimer, setEvalTimer] = useState(0);
+  const [evalJobId, setEvalJobId] = useState<string | null>(null);
+  const [evalStatusMessage, setEvalStatusMessage] = useState("");
   // Annotations
   const [annotations, setAnnotations] = useState<any[]>([]);
   const [annoRating, setAnnoRating] = useState("");
@@ -106,11 +108,73 @@ function TraceDetailContent() {
     return () => clearInterval(interval);
   }, [evalRunning]);
 
+  // Resume in-flight job after page reload — find the most recent
+  // queued/running job for THIS trace and start polling it.
+  useEffect(() => {
+    if (!traceId || evalJobId) return;
+    fetch(`${API}/evaluation/jobs?trace_id=${traceId}&status=queued,running&limit=1`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.jobs && d.jobs.length > 0) {
+          setEvalJobId(d.jobs[0].id);
+          setEvalRunning(true);
+          setEvalStatusMessage(d.jobs[0].progress_message || "Resuming...");
+        }
+      })
+      .catch(() => {});
+  }, [traceId]);
+
+  // Poll the active job until it finishes
+  useEffect(() => {
+    if (!evalJobId) return;
+    let cancelled = false;
+
+    const tick = async () => {
+      try {
+        const r = await fetch(`${API}/evaluation/jobs/${evalJobId}`);
+        if (!r.ok) {
+          if (!cancelled) {
+            setEvalRunning(false);
+            setEvalJobId(null);
+          }
+          return;
+        }
+        const job = await r.json();
+        if (cancelled) return;
+
+        setEvalStatusMessage(job.progress_message || job.status);
+
+        if (job.status === "completed") {
+          setEvalResult(job.result);
+          setEvalRunning(false);
+          setEvalJobId(null);
+          // Refresh trace to pick up new metrics
+          const t = await fetch(`${API}/traces/${traceId}`).then((r) => r.json());
+          if (!cancelled) setTrace(t);
+        } else if (job.status === "failed" || job.status === "cancelled") {
+          setEvalResult({ status: "error", error: job.error || job.status });
+          setEvalRunning(false);
+          setEvalJobId(null);
+        }
+      } catch {
+        // Network blip — keep polling
+      }
+    };
+
+    tick();
+    const interval = setInterval(tick, 2000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [evalJobId, traceId]);
+
   const runMultiLLMEval = async () => {
     setEvalRunning(true);
     setEvalResult(null);
+    setEvalStatusMessage("Queuing evaluation...");
     try {
-      const res = await fetch(`${API}/evaluation/run-multi-llm`, {
+      const res = await fetch(`${API}/evaluation/run-multi-llm-async`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -121,14 +185,18 @@ function TraceDetailContent() {
           dataset_name: gtSource === "dataset" ? (selectedDataset || null) : null,
         }),
       });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setEvalResult({ status: "error", error: err.detail || `HTTP ${res.status}` });
+        setEvalRunning(false);
+        return;
+      }
       const data = await res.json();
-      setEvalResult(data);
-      // Refresh trace
-      const t = await fetch(`${API}/traces/${traceId}`).then((r) => r.json());
-      setTrace(t);
+      // Hand off to the polling effect
+      setEvalJobId(data.job_id);
+      setEvalStatusMessage("Queued — you can navigate away, the eval will keep running.");
     } catch (e) {
       setEvalResult({ status: "error", error: String(e) });
-    } finally {
       setEvalRunning(false);
     }
   };
@@ -576,27 +644,40 @@ function TraceDetailContent() {
         )}
 
         {/* Run Button */}
-        <button
-          onClick={runMultiLLMEval}
-          disabled={evalRunning || selectedMetrics.length === 0 || selectedLLMs.length === 0}
-          className={`px-6 py-2.5 rounded-lg text-sm font-medium transition-all ${
-            evalRunning
-              ? "bg-yellow-500 text-white animate-pulse cursor-wait"
-              : "bg-primary-600 text-white hover:bg-primary-700 disabled:opacity-50"
-          }`}
-        >
-          {evalRunning ? (
-            <span className="flex items-center gap-2">
-              <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+        <div className="space-y-2">
+          <button
+            onClick={runMultiLLMEval}
+            disabled={evalRunning || selectedMetrics.length === 0 || selectedLLMs.length === 0}
+            className={`px-6 py-2.5 rounded-lg text-sm font-medium transition-all ${
+              evalRunning
+                ? "bg-yellow-500 text-white animate-pulse cursor-wait"
+                : "bg-primary-600 text-white hover:bg-primary-700 disabled:opacity-50"
+            }`}
+          >
+            {evalRunning ? (
+              <span className="flex items-center gap-2">
+                <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+                Running... {evalTimer}s
+              </span>
+            ) : (
+              `Evaluate with ${selectedLLMs.length} LLM${selectedLLMs.length !== 1 ? "s" : ""} x ${selectedMetrics.length} Metric${selectedMetrics.length !== 1 ? "s" : ""}`
+            )}
+          </button>
+          {evalRunning && (
+            <div className="text-xs bg-indigo-50 border border-indigo-200 text-indigo-800 rounded-lg px-3 py-2 flex items-start gap-2">
+              <svg className="w-4 h-4 text-indigo-500 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
-              Running... {evalTimer}s
-            </span>
-          ) : (
-            `Evaluate with ${selectedLLMs.length} LLM${selectedLLMs.length !== 1 ? "s" : ""} x ${selectedMetrics.length} Metric${selectedMetrics.length !== 1 ? "s" : ""}`
+              <div>
+                <p className="font-semibold">{evalStatusMessage || "Running in background..."}</p>
+                <p className="text-indigo-600 mt-0.5">You can navigate away — the evaluation will keep running and the results will be saved when done.</p>
+              </div>
+            </div>
           )}
-        </button>
+        </div>
       </div>
 
       {/* ========================================

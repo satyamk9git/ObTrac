@@ -389,7 +389,7 @@ Variables that must be present in the output: __EXPECTED_VARS__
 
 Versions to merge:
 __VERSIONS_TEXT__
-
+__EXTRA_INSTRUCTIONS_BLOCK__
 Now return only the merged template (and nothing else):"""
 
 
@@ -400,6 +400,7 @@ _drafts: dict[str, dict] = {}
 class MergeRequest(BaseModel):
     versions: list[int]                    # e.g. [2, 3]
     llm_config_id: Optional[str] = None    # which LLM to use; if None, picks auto-eval LLM
+    extra_instructions: Optional[str] = None  # optional edge cases / extra guidance from the user
 
 
 @router.post("/{name}/merge")
@@ -460,10 +461,20 @@ def merge_versions(
 
     # Build the merge prompt (using string replace to avoid format() conflicts with {var} in templates)
     expected_vars_str = ", ".join(f"{{{v}}}" for v in expected_vars)
+
+    # Optional user-provided edge cases / extra guidance
+    extra_block = ""
+    if req.extra_instructions and req.extra_instructions.strip():
+        extra_block = (
+            "\n\nADDITIONAL USER GUIDANCE — must be followed in addition to the rules above:\n"
+            f"{req.extra_instructions.strip()}\n"
+        )
+
     merge_prompt = (
         MERGE_SYSTEM_PROMPT
         .replace("__EXPECTED_VARS__", expected_vars_str)
         .replace("__VERSIONS_TEXT__", versions_text)
+        .replace("__EXTRA_INSTRUCTIONS_BLOCK__", extra_block)
     )
 
     # Call the LLM via LiteLLM
@@ -524,6 +535,7 @@ def merge_versions(
         "actual_variables": sorted(actual_vars),
         "missing_variables": sorted(missing),
         "extra_variables": sorted(extra),
+        "extra_instructions": req.extra_instructions or "",
         "warnings": [],
     }
 

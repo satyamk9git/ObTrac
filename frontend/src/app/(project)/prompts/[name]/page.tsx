@@ -37,6 +37,8 @@ function PromptDetailContent() {
   const [mergeDraft, setMergeDraft] = useState<any>(null);
   const [mergeRunning, setMergeRunning] = useState(false);
   const [editedDraftTemplate, setEditedDraftTemplate] = useState("");
+  const [regenerateInstructions, setRegenerateInstructions] = useState("");
+  const [regenerating, setRegenerating] = useState(false);
 
   // Lineage / version detail expand
   const [expandedVersion, setExpandedVersion] = useState<number | null>(null);
@@ -128,6 +130,37 @@ function PromptDetailContent() {
       alert(`Error: ${e}`);
     } finally {
       setMergeRunning(false);
+    }
+  };
+
+  const handleRegenerateDraft = async () => {
+    if (!mergeDraft) return;
+    setRegenerating(true);
+    try {
+      const res = await fetch(`${API}/prompts/${name}/merge?project=${encodeURIComponent(project)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          versions: mergeDraft.merged_from,
+          llm_config_id: mergeLLMId || mergeDraft.llm_config_id || null,
+          extra_instructions: regenerateInstructions.trim() || null,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        // Discard the old draft so we don't leak in-memory entries
+        try {
+          await fetch(`${API}/prompts/drafts/${mergeDraft.draft_id}`, { method: "DELETE" });
+        } catch {}
+        setMergeDraft(data);
+        setEditedDraftTemplate(data.merged_template || "");
+      } else {
+        alert(data.detail || "Regeneration failed");
+      }
+    } catch (e) {
+      alert(`Error: ${e}`);
+    } finally {
+      setRegenerating(false);
     }
   };
 
@@ -418,6 +451,44 @@ function PromptDetailContent() {
 
                 <textarea value={editedDraftTemplate} onChange={e => setEditedDraftTemplate(e.target.value)}
                   rows={14} className="w-full font-mono text-xs bg-gray-900 text-green-400 rounded-lg p-4 outline-none focus:ring-2 focus:ring-indigo-500" />
+
+                {/* Regenerate with extra guidance */}
+                <div className="mt-4 bg-purple-50 border border-purple-200 rounded-lg p-3">
+                  <div className="flex items-start gap-2 mb-2">
+                    <svg className="w-4 h-4 text-purple-600 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                    <div className="flex-1">
+                      <p className="text-xs font-semibold text-purple-900">Not happy with the merge? Regenerate with extra guidance.</p>
+                      <p className="text-[11px] text-purple-700 mt-0.5">
+                        Optionally tell the AI about edge cases, constraints, or specific behaviors you want preserved. Leave blank to just retry with the same instructions.
+                      </p>
+                    </div>
+                  </div>
+                  <textarea
+                    value={regenerateInstructions}
+                    onChange={(e) => setRegenerateInstructions(e.target.value)}
+                    rows={3}
+                    placeholder="e.g. 'Make sure the prompt handles empty context gracefully', 'Add a constraint to never mention dates', 'Output must be valid JSON'..."
+                    className="w-full text-xs border border-purple-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-400 bg-white"
+                  />
+                  <div className="flex items-center justify-between mt-2">
+                    <p className="text-[10px] text-purple-600">
+                      Will use {mergeLLMs.find((l) => l.id === (mergeLLMId || mergeDraft.llm_config_id))?.name || mergeDraft.merged_by_llm}
+                    </p>
+                    <button
+                      onClick={handleRegenerateDraft}
+                      disabled={regenerating}
+                      className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-all ${
+                        regenerating
+                          ? "bg-gray-200 text-gray-500 cursor-wait"
+                          : "bg-purple-600 text-white hover:bg-purple-700"
+                      }`}
+                    >
+                      {regenerating ? "Regenerating..." : (regenerateInstructions.trim() ? "Regenerate with Guidance" : "Regenerate")}
+                    </button>
+                  </div>
+                </div>
 
                 <div className="flex gap-2 mt-3">
                   <button onClick={handleApproveDraft} className="btn-primary">

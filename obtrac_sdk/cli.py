@@ -334,6 +334,106 @@ def cmd_open():
     webbrowser.open(url)
 
 
+def cmd_embedder(action: str, **kwargs):
+    """Manage embedder configurations from the CLI.
+
+    Subcommands:
+        list                            Show all embedder configs
+        add --name X --provider Y ...   Create a new embedder
+        set-default <name>              Mark an embedder as default
+        delete <name>                   Delete an embedder
+        test <name>                     Encode a tiny string with an embedder
+    """
+    import requests
+    import json
+
+    base = f"http://localhost:{BACKEND_PORT}/api/v1/embedder"
+
+    def _get_by_name(name: str):
+        r = requests.get(base)
+        r.raise_for_status()
+        for e in r.json().get("embedders", []):
+            if e["name"] == name:
+                return e
+        return None
+
+    try:
+        if action == "list":
+            r = requests.get(base)
+            r.raise_for_status()
+            embedders = r.json().get("embedders", [])
+            if not embedders:
+                print("No embedders configured. Falling back to local sentence-transformers/all-MiniLM-L6-v2.")
+                return
+            print(f"{'NAME':<20} {'PROVIDER':<22} {'MODEL':<32} {'DEFAULT':<8}")
+            print("-" * 90)
+            for e in embedders:
+                default_flag = "✓" if e.get("is_default") else ""
+                print(f"{e['name']:<20} {e['provider']:<22} {e['model_id']:<32} {default_flag:<8}")
+
+        elif action == "add":
+            payload = {
+                "name": kwargs["name"],
+                "provider": kwargs.get("provider", "sentence_transformers"),
+                "model_id": kwargs.get("model", "all-MiniLM-L6-v2"),
+                "is_default": kwargs.get("default", False),
+            }
+            if kwargs.get("api_key"):
+                payload["api_key"] = kwargs["api_key"]
+            if kwargs.get("api_base"):
+                payload["api_base"] = kwargs["api_base"]
+            if kwargs.get("api_version"):
+                payload["api_version"] = kwargs["api_version"]
+            if kwargs.get("azure_deployment"):
+                payload["azure_deployment"] = kwargs["azure_deployment"]
+            r = requests.post(base, json=payload)
+            if r.ok:
+                print(f"Created embedder '{kwargs['name']}'")
+                if payload["is_default"]:
+                    print("Set as default.")
+            else:
+                print(f"Failed: HTTP {r.status_code} — {r.text}")
+                sys.exit(1)
+
+        elif action == "set-default":
+            target = _get_by_name(kwargs["name"])
+            if not target:
+                print(f"Embedder '{kwargs['name']}' not found.")
+                sys.exit(1)
+            r = requests.put(f"{base}/{target['id']}", json={"is_default": True})
+            r.raise_for_status()
+            print(f"Set '{kwargs['name']}' as default embedder.")
+
+        elif action == "delete":
+            target = _get_by_name(kwargs["name"])
+            if not target:
+                print(f"Embedder '{kwargs['name']}' not found.")
+                sys.exit(1)
+            r = requests.delete(f"{base}/{target['id']}")
+            r.raise_for_status()
+            print(f"Deleted '{kwargs['name']}'.")
+
+        elif action == "test":
+            target = _get_by_name(kwargs["name"])
+            if not target:
+                print(f"Embedder '{kwargs['name']}' not found.")
+                sys.exit(1)
+            r = requests.post(f"{base}/{target['id']}/test")
+            data = r.json()
+            if r.ok:
+                print(f"✓ {kwargs['name']} works — {data['dimensions']} dimensions")
+            else:
+                print(f"✗ Test failed: {data.get('detail', r.text)}")
+                sys.exit(1)
+        else:
+            print(f"Unknown embedder action: {action}")
+            sys.exit(1)
+
+    except requests.ConnectionError:
+        print(f"Cannot reach backend at http://localhost:{BACKEND_PORT}. Is it running? Try: obtrac start")
+        sys.exit(1)
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="obtrac",
@@ -347,6 +447,32 @@ def main():
     subparsers.add_parser("status", help="Check service status")
     subparsers.add_parser("open", help="Open dashboard in browser")
 
+    # `obtrac embedder ...` — manage embedder configs
+    emb = subparsers.add_parser("embedder", help="Manage embedder configurations")
+    emb_sub = emb.add_subparsers(dest="emb_action")
+
+    emb_sub.add_parser("list", help="List all embedder configs")
+
+    add_p = emb_sub.add_parser("add", help="Add a new embedder config")
+    add_p.add_argument("--name", required=True)
+    add_p.add_argument("--provider", default="sentence_transformers",
+                       help="sentence_transformers|openai|azure_openai|cohere|vertex|huggingface|ollama")
+    add_p.add_argument("--model", default="all-MiniLM-L6-v2", help="Model identifier")
+    add_p.add_argument("--api-key", default=None)
+    add_p.add_argument("--api-base", default=None)
+    add_p.add_argument("--api-version", default=None)
+    add_p.add_argument("--azure-deployment", default=None)
+    add_p.add_argument("--default", action="store_true", help="Set as default embedder")
+
+    sd_p = emb_sub.add_parser("set-default", help="Mark an embedder as default")
+    sd_p.add_argument("name")
+
+    del_p = emb_sub.add_parser("delete", help="Delete an embedder")
+    del_p.add_argument("name")
+
+    test_p = emb_sub.add_parser("test", help="Test an embedder by encoding a string")
+    test_p.add_argument("name")
+
     args = parser.parse_args()
 
     if args.command == "install":
@@ -359,6 +485,15 @@ def main():
         cmd_status()
     elif args.command == "open":
         cmd_open()
+    elif args.command == "embedder":
+        if not getattr(args, "emb_action", None):
+            emb.print_help()
+            return
+        kwargs = {}
+        for k in ("name", "provider", "model", "api_key", "api_base", "api_version", "azure_deployment", "default"):
+            if hasattr(args, k):
+                kwargs[k] = getattr(args, k)
+        cmd_embedder(args.emb_action, **kwargs)
     else:
         parser.print_help()
         print()
@@ -366,6 +501,11 @@ def main():
         print("  obtrac install   # Install frontend deps")
         print("  obtrac start     # Start backend + dashboard")
         print("  obtrac open      # Open dashboard in browser")
+        print()
+        print("Embedder management:")
+        print("  obtrac embedder list")
+        print("  obtrac embedder add --name local --provider sentence_transformers --model all-MiniLM-L6-v2 --default")
+        print("  obtrac embedder test local")
 
 
 if __name__ == "__main__":

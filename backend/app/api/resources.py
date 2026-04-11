@@ -180,18 +180,9 @@ def delete_ground_truth(record_id: str, db: Session = Depends(get_db)):
     return {"status": "deleted"}
 
 
-# Embedding model cache
-_embed_model = None
-_dataset_embeddings_cache: dict = {}  # {dataset_name: {"records": [...], "embeddings": np.array}}
-
-
-def _get_embedding_model():
-    """Lazy load HuggingFace embedding model."""
-    global _embed_model
-    if _embed_model is None:
-        from sentence_transformers import SentenceTransformer
-        _embed_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2", device="cpu")
-    return _embed_model
+# Cache for dataset embeddings — keyed by (project, dataset, embedder_id) so
+# that switching the default embedder doesn't return stale vectors.
+_dataset_embeddings_cache: dict = {}
 
 
 @router.get("/ground-truth/match")
@@ -231,24 +222,38 @@ def match_ground_truth_semantic(
                 "match_type": "exact",
             }
 
-    # Semantic match using embeddings
+    # Semantic match using embeddings — uses the default Embedder Config
+    # (Embedder Config page) if set, otherwise falls back to local MiniLM.
     try:
         import numpy as np
+        from app.db.models import EmbedderConfigRecord
+        from app.services.embedder import get_embeddings
 
-        cache_key = f"{project}:{dataset_name}"
+        active_embedder = (
+            db.query(EmbedderConfigRecord)
+            .filter(EmbedderConfigRecord.is_default == True, EmbedderConfigRecord.is_active == True)
+            .first()
+        )
+        embedder_id = active_embedder.id if active_embedder else "fallback-minilm"
+
+        cache_key = f"{project}:{dataset_name}:{embedder_id}"
         cached = _dataset_embeddings_cache.get(cache_key)
 
         # Cache invalidation: re-embed if record count changed
         if not cached or len(cached.get("records", [])) != len(records):
-            model = _get_embedding_model()
             questions = [r.question for r in records]
-            embeddings = model.encode(questions, convert_to_numpy=True, show_progress_bar=False)
+            embeddings = np.array(
+                get_embeddings(questions, db=db, embedder=active_embedder),
+                dtype=np.float32,
+            )
             cached = {"records": records, "embeddings": embeddings}
             _dataset_embeddings_cache[cache_key] = cached
 
-        # Embed the query
-        model = _get_embedding_model()
-        query_emb = model.encode([query], convert_to_numpy=True, show_progress_bar=False)[0]
+        # Embed the query using the same embedder
+        query_emb = np.array(
+            get_embeddings([query], db=db, embedder=active_embedder)[0],
+            dtype=np.float32,
+        )
 
         # Cosine similarity
         embeddings = cached["embeddings"]

@@ -61,14 +61,37 @@ function DashboardContent() {
           {/* Stats */}
           <div className="grid grid-cols-4 gap-4 mb-6">
             {[
-              { label: "Total Traces", value: summary.total_traces, color: "text-gray-900" },
-              { label: "Avg Latency", value: `${(summary.performance_stats?.avg_latency_ms || 0).toFixed(0)}ms`, color: "text-blue-600" },
-              { label: "Total Cost", value: `$${(summary.cost_stats?.total_cost_usd || 0).toFixed(4)}`, color: "text-green-600" },
-              { label: "Total Tokens", value: (summary.cost_stats?.total_tokens || 0).toLocaleString(), color: "text-purple-600" },
+              {
+                label: "Total Traces",
+                hint: "lifetime",
+                value: summary.total_traces,
+                color: "text-gray-900",
+              },
+              {
+                label: "Avg Latency",
+                hint: "across all traces",
+                value: `${(summary.performance_stats?.avg_latency_ms || 0).toFixed(0)}ms`,
+                color: "text-blue-600",
+              },
+              {
+                label: "Total Cost",
+                hint: "lifetime — see Budgets for windowed spend",
+                value: `$${(summary.cost_stats?.total_cost_usd || 0).toFixed(4)}`,
+                color: "text-green-600",
+              },
+              {
+                label: "Total Tokens",
+                hint: "lifetime",
+                value: (summary.cost_stats?.total_tokens || 0).toLocaleString(),
+                color: "text-purple-600",
+              },
             ].map((stat) => (
-              <div key={stat.label} className="card">
-                <p className="text-xs text-gray-500 mb-1">{stat.label}</p>
-                <p className={`text-2xl font-bold ${stat.color}`}>{stat.value}</p>
+              <div key={stat.label} className="card" title={stat.hint}>
+                <div className="flex items-baseline justify-between">
+                  <p className="text-xs text-gray-500">{stat.label}</p>
+                  <p className="text-[9px] text-gray-400 italic">{stat.hint}</p>
+                </div>
+                <p className={`text-2xl font-bold mt-1 ${stat.color}`}>{stat.value}</p>
               </div>
             ))}
           </div>
