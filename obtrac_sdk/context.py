@@ -28,7 +28,13 @@ class ObTracContext:
 
     @staticmethod
     def reset_trace(token: contextvars.Token):
-        _current_trace.reset(token)
+        try:
+            _current_trace.reset(token)
+        except ValueError:
+            # Token was created in a different Context (e.g. async generator
+            # resumed in a different asyncio task). reset() requires the same
+            # Context; set(None) is safe across boundaries — best-effort cleanup.
+            _current_trace.set(None)
 
     @staticmethod
     def get_current_span() -> Span | None:
@@ -40,7 +46,11 @@ class ObTracContext:
 
     @staticmethod
     def reset_span(token: contextvars.Token):
-        _current_span.reset(token)
+        try:
+            _current_span.reset(token)
+        except ValueError:
+            # Same cross-context issue — fall back to set(None)
+            _current_span.set(None)
 
     @staticmethod
     def log_llm_usage(
