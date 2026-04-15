@@ -334,43 +334,321 @@ p = get_prompt("my_system_prompt", version=2)   # pin to version 2
 
 ---
 
-## 13. @trace on your own functions
+## 13. Understanding @trace — How it works and where to put it
 
-Use `@trace` on any function that runs inside your agent to get child spans.
+`@trace` is ObTrac's universal instrumentation decorator. One decorator handles
+everything — sync functions, async functions, async generators, root-level pipelines,
+and nested child spans. This section explains the mental model so you know exactly
+where to put it and what you will see in the dashboard.
+
+---
+
+### The core concept: Root vs. Child
+
+Every time a `@trace`-decorated function is called, ObTrac checks one thing:
+
+> **Is there already an active Trace in the current execution context?**
+
+- **No active Trace** → `@trace` creates a **root Trace**. This is the top-level
+  record that appears as a row in the Traces page. It holds query, answer, cost,
+  latency, and evaluation scores for the entire operation.
+
+- **Active Trace exists** → `@trace` creates a **child Span** inside it. Spans
+  are the steps visible in the Span Tree on the Trace Detail page. They share the
+  same Trace ID and are nested under the root.
+
+This detection is fully automatic — you do not configure it. The same decorator
+behaves differently depending on the call stack at runtime.
+
+```
+User message arrives
+    │
+    ▼
+@trace  ← no active Trace → creates ROOT Trace
+    │
+    ├── @trace  ← active Trace exists → creates SPAN (retrieval)
+    │
+    ├── @trace  ← active Trace exists → creates SPAN (generation)
+    │       │
+    │       └── @trace  ← nested → creates SPAN (tool_call)
+    │
+    └── Trace finalized → sent to ObTrac backend
+```
+
+---
+
+### Where to put @trace in a Google ADK project
+
+In an ADK project, the callbacks handle the outermost Trace automatically — you
+do not need `@trace` on your agent class. Where `@trace` adds value is on the
+**functions your agent calls**: your tools, your retrieval logic, your LLM
+wrapper functions, your post-processing steps.
+
+Think of it in three layers:
+
+```
+LAYER 1 — ADK callbacks handle this automatically
+─────────────────────────────────────────────────
+before_agent_callback  →  opens root Trace
+after_agent_callback   →  closes root Trace, sends to backend
+before_model_callback  →  opens llm_call Span
+after_model_callback   →  closes llm_call Span with tokens
+before_tool_callback   →  opens tool Span
+after_tool_callback    →  closes tool Span
+
+LAYER 2 — Put @trace here (inside your tool functions)
+──────────────────────────────────────────────────────
+@trace on your retrieval function   →  retrieval Span
+@trace on your LLM wrapper          →  generation Span with cost
+@trace on your post-processing      →  custom Span
+
+LAYER 3 — Optionally put @trace here (utility functions)
+─────────────────────────────────────────────────────────
+@trace on a re-ranker               →  custom Span
+@trace on a validator               →  custom Span
+```
+
+The ADK tool callback (`before_tool_callback`) already creates a span for
+every tool call. Adding `@trace` inside the tool function creates a **nested**
+span with richer input/output detail. Both are valid — use one or the other,
+not both, to avoid double-counting.
+
+---
+
+### Function types — all handled automatically
+
+`@trace` inspects the function at decoration time and wraps it appropriately.
+You write your function naturally; `@trace` adapts to it.
+
+**Regular (sync) function:**
+```python
+@trace(name="my_step", span_type="custom")
+def process_document(text: str) -> str:
+    # runs synchronously
+    return cleaned_text
+```
+
+**Async coroutine:**
+```python
+@trace(name="fetch_context", span_type="retrieval")
+async def fetch_context(query: str) -> list:
+    # awaited by the caller
+    results = await vector_db.search(query)
+    return results
+```
+
+**Async generator (streaming):**
+```python
+@trace(name="stream_response", span_type="generation")
+async def stream_response(prompt: str):
+    # yields events one at a time — ADK agents often look like this
+    async for chunk in llm.stream(prompt):
+        yield chunk
+```
+
+All three produce the same kind of Span in the dashboard. The difference is only
+how Python executes them — `@trace` handles the wrapping internally.
+
+---
+
+### The span_type parameter — what to use when
+
+`span_type` controls how the span is categorized and displayed in the dashboard.
+It also affects which metrics are auto-calculated (e.g. token costs are only
+auto-estimated for `generation` and `agent` types).
+
+| span_type | When to use |
+|---|---|
+| `"retrieval"` | Any function that searches a vector DB, document store, or index. The return value is treated as retrieved context for RAGAS evaluation. |
+| `"generation"` | Any function that calls an LLM and returns text. Token counting and cost calculation are applied. |
+| `"tool_call"` | Any ADK tool function — the function your agent calls via its `tools=[...]` list. |
+| `"agent"` | The outermost function of a pipeline or sub-agent. In root mode this becomes the Trace name. |
+| `"embedding"` | A function that calls an embedding model. |
+| `"planning"` | A reasoning or planning step before execution. |
+| `"custom"` | Anything else — utility functions, validators, post-processors. |
+
+---
+
+### Field mappings — connecting function args to Trace fields
+
+When `@trace` runs in **root mode** (no active trace), it needs to know which
+function argument is the user query, which is the retrieved context, and which
+is the final answer. These are the fields that appear in the Trace Detail page
+and are used for RAGAS evaluation.
+
+You tell `@trace` about them using field mapping parameters:
+
+| Parameter | What it maps | Maps to |
+|---|---|---|
+| `query="arg_name"` | The function argument containing the user's question | `trace.query` |
+| `context="arg_name"` | The argument containing retrieved document text | `trace.context` |
+| `response="arg_name"` | The argument (or `"return"`) containing the LLM's answer | `trace.answer` |
+| `ground_truth="arg_name"` | The argument containing the expected correct answer | `trace.ground_truth` |
+
+The special value `"return"` means "use the function's return value":
 
 ```python
-from obtrac_sdk import trace
-
-# Root trace (when no active trace) — works like @observe
 @trace(
-    name="full_pipeline",
+    name="rag_pipeline",
     span_type="agent",
-    query="question",           # arg name → trace.query
-    context="retrieved_docs",   # arg name → trace.context
-    response="return",          # return value → trace.answer
-    ground_truth="expected",    # arg name → trace.ground_truth
-    metrics=["faithfulness", "answer_relevancy"],  # RAGAS metrics
+    query="user_question",       # maps the 'user_question' argument
+    context="retrieved_docs",    # maps the 'retrieved_docs' argument
+    response="return",           # maps the function's return value
+    ground_truth="expected_ans", # maps the 'expected_ans' argument
 )
-def full_pipeline(question, retrieved_docs, expected=None):
-    return generate(question, retrieved_docs)
-
-# Child span (inside an active trace)
-@trace(name="retrieve", span_type="retrieval", context="return")
-def retrieve(query, db, k=5):
-    return db.search(query, k=k)
-
-# Async functions work identically
-@trace(name="generate", span_type="generation",
-       cost={"input_token_cost": 0.003, "output_token_cost": 0.012})
-async def generate(question, context):
-    return await llm.invoke(f"Context: {context}\nQ: {question}")
-
-# Async generators (streaming agents)
-@trace(name="stream_agent", span_type="agent")
-async def stream_agent(ctx):
-    async for event in inner_agent.run(ctx):
-        yield event
+def rag_pipeline(user_question, retrieved_docs, expected_ans=None):
+    answer = llm.generate(user_question, retrieved_docs)
+    return answer
 ```
+
+In **child mode** (active trace exists), these field mappings propagate their
+values up to the parent Trace — so a retrieval child span can populate
+`trace.context` for the root Trace:
+
+```python
+@trace(name="retrieve", span_type="retrieval", context="return")
+def retrieve(query, db):
+    # return value → automatically added to the parent trace's context field
+    return db.search(query)
+```
+
+---
+
+### metrics and ground_truth — for RAGAS evaluation
+
+When `auto_eval=True` in `obtrac_config()`, ObTrac runs RAGAS evaluation after
+each root Trace. The `metrics` parameter controls which metrics run for this
+specific function, overriding the global default.
+
+```python
+obtrac_config(
+    project="my-app",
+    auto_eval=True,
+    default_metrics=["faithfulness"],   # runs on all traces by default
+)
+
+@trace(
+    name="rag_pipeline",
+    span_type="agent",
+    query="question",
+    response="return",
+    ground_truth="expected",   # required for answer_correctness
+    metrics=["faithfulness", "answer_relevancy", "answer_correctness"],
+)
+def rag_pipeline(question, expected=None):
+    return generate(question)
+```
+
+Available metrics:
+
+| Metric | Requires ground_truth |
+|---|---|
+| `faithfulness` | No — measures if answer is grounded in context |
+| `answer_relevancy` | No — measures if answer addresses the question |
+| `context_precision` | No — measures if retrieved context is relevant |
+| `context_recall` | Yes — measures if context covers the answer |
+| `answer_correctness` | Yes — measures factual correctness vs expected answer |
+| `answer_similarity` | Yes — semantic similarity to expected answer |
+
+---
+
+### cost — token pricing per function
+
+Add cost tracking to any generation span:
+
+```python
+@trace(
+    name="generate_answer",
+    span_type="generation",
+    cost={
+        "input_token_cost": 0.003,   # $ per 1K input tokens
+        "output_token_cost": 0.012,  # $ per 1K output tokens
+    }
+)
+def generate_answer(prompt: str) -> str:
+    return llm.call(prompt)
+```
+
+If a LiteLLM response object is returned, ObTrac reads the actual cost from it
+directly. The `cost` parameter is used as a fallback when the LLM client does
+not report cost.
+
+---
+
+### Nesting — how spans build the tree
+
+The Span Tree in the Trace Detail page shows the call hierarchy. The deeper you
+nest `@trace`-decorated functions, the deeper the tree. There is no limit.
+
+```python
+@trace(name="full_pipeline", span_type="agent")   # ROOT TRACE
+def full_pipeline(question):
+
+    docs = retrieve(question)      # ← SPAN: retrieval
+    answer = generate(question, docs)  # ← SPAN: generation
+                                       #     └── SPAN: llm_api_call (if nested)
+    return answer
+
+@trace(name="retrieve", span_type="retrieval", context="return")
+def retrieve(query):
+    return vector_db.search(query)
+
+@trace(name="generate", span_type="generation")
+def generate(question, context):
+    prompt = build_prompt(question, context)
+    return call_llm(prompt)          # ← SPAN: tool_call (if @trace on call_llm)
+```
+
+Dashboard view of the above:
+```
+Trace: full_pipeline  3200ms  $0.0024
+  ├── retrieve         45ms
+  └── generate        3155ms
+        └── call_llm  3100ms
+```
+
+---
+
+### In an ADK project specifically — recommended placement
+
+```
+your_agent/
+├── agent.py         ← NO @trace here. ADK callbacks handle the root Trace.
+├── tools/
+│   ├── search.py    ← @trace(span_type="tool_call")  on each tool function
+│   ├── retrieval.py ← @trace(span_type="retrieval")  on vector search functions
+│   └── calculator.py← @trace(span_type="tool_call")  on calculator functions
+└── utils/
+    ├── llm_client.py← @trace(span_type="generation") on your LLM wrapper
+    └── reranker.py  ← @trace(span_type="custom")     on post-processing
+```
+
+**Do NOT put `@trace` on:**
+- Your ADK `Agent` class or its `instruction` / `description`
+- The `root_agent` variable itself
+- ADK internal methods
+
+**DO put `@trace` on:**
+- Every tool function in your `tools=[...]` list
+- Any helper function called from within a tool
+- Your LLM wrapper if you have one (not needed if using ADK's built-in model)
+- Your retrieval / embedding functions
+- Any multi-step processing function
+
+---
+
+### Summary
+
+| Situation | What to do |
+|---|---|
+| Top-level pipeline, no framework | Put `@trace` on the outermost function → becomes root Trace |
+| Using ADK callbacks | Don't add `@trace` for the root — callbacks handle it |
+| Tool function | Add `@trace(span_type="tool_call")` → appears as child Span |
+| Retrieval function | Add `@trace(span_type="retrieval", context="return")` → context flows to root |
+| LLM call wrapper | Add `@trace(span_type="generation", cost={...})` → token tracking |
+| Utility / post-processing | Add `@trace(span_type="custom")` → visible in Span Tree |
+| Async function | Same decorator — `@trace` auto-detects and wraps correctly |
+| Async generator / streaming | Same decorator — `@trace` wraps the generator without breaking yield |
 
 ---
 
