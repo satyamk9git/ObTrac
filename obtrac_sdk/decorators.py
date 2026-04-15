@@ -222,6 +222,16 @@ def _extract_session_id(args, kwargs) -> str | None:
                 if v and isinstance(v, str):
                     return v
 
+        # 6. Google ADK ToolContext — .invocation_context.session.id
+        inv_ctx = getattr(val, "invocation_context", None)
+        if inv_ctx is not None:
+            session = getattr(inv_ctx, "session", None)
+            if session is not None:
+                for attr in ("id", "session_id"):
+                    v = getattr(session, attr, None)
+                    if v and isinstance(v, str):
+                        return v
+
     return None
 
 
