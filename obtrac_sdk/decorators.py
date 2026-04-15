@@ -222,7 +222,9 @@ def _extract_session_id(args, kwargs) -> str | None:
                 if v and isinstance(v, str):
                     return v
 
-        # 6. Google ADK ToolContext — .invocation_context.session.id
+        # 6. Google ADK ToolContext / CallbackContext — .session.id (ADK 1.x)
+        #    Already covered by check #5 above (.session.id).
+        #    Legacy ADK: .invocation_context.session.id
         inv_ctx = getattr(val, "invocation_context", None)
         if inv_ctx is not None:
             session = getattr(inv_ctx, "session", None)
@@ -247,7 +249,7 @@ def _build_root_trace(cfg, trace_name: str, args=(), kwargs=None) -> Trace:
 
 
 def _apply_field_map(trace_obj: Trace, field_map: dict, all_args: dict, result):
-    """Apply @trace field mappings (query/context/response) onto a root trace."""
+    """Apply @trace field mappings (query/context/response/ground_truth) onto a root trace."""
     if "query" in field_map:
         q_val = _resolve_field(field_map["query"], all_args, result)
         if q_val and not trace_obj.query:
@@ -260,6 +262,10 @@ def _apply_field_map(trace_obj: Trace, field_map: dict, all_args: dict, result):
         r_val = _resolve_field(field_map["response"], all_args, result)
         if r_val:
             trace_obj.answer = str(r_val)
+    if "ground_truth" in field_map:
+        gt_val = _resolve_field(field_map["ground_truth"], all_args, result)
+        if gt_val:
+            trace_obj.ground_truth = str(gt_val)
 
 
 # ---------------------------------------------------------------------------
@@ -276,6 +282,8 @@ def trace(
     query: str = None,
     context: str = None,
     response: str = None,
+    ground_truth: str = None,
+    metrics: list = None,
 ):
     """
     Unified decorator for RAG pipeline instrumentation.
@@ -304,14 +312,21 @@ def trace(
             In root mode, sets trace.context.
         response (str): Argument name (or "return") for the LLM answer.
             In root mode, sets trace.answer. Default: "return".
+        ground_truth (str): Argument name that contains the expected answer.
+            In root mode, sets trace.ground_truth (used for RAGAS evaluation).
+        metrics (list[str]): RAGAS metrics to run when auto_eval=True in config.
+            E.g. ["faithfulness", "answer_relevancy", "context_precision"].
+            Only applies in root mode. Overrides config.default_metrics.
 
     Examples:
-        Root trace — no active trace, works like old @observe::
+        Full RAG pipeline with eval::
 
-            @trace(name="rag_pipeline", span_type="agent")
-            async def pipeline(question, vectorstore):
-                chunks = await retrieve(question)
-                return await generate(question, chunks)
+            @trace(name="rag_pipeline", span_type="agent",
+                   query="question", context="docs", response="return",
+                   ground_truth="expected",
+                   metrics=["faithfulness", "answer_relevancy"])
+            def pipeline(question, docs, expected=None):
+                return generate(question, docs)
 
         Child span — inside an existing trace::
 
@@ -340,6 +355,8 @@ def trace(
         _field_map["context"] = context
     if response:
         _field_map["response"] = response
+    if ground_truth:
+        _field_map["ground_truth"] = ground_truth
 
     def decorator(func: Callable) -> Callable:
         span_name = name or func.__name__
@@ -401,7 +418,8 @@ def trace(
                     current_trace.spans.append(span)
                     current_trace.finish()
                     _collect_context_from_spans(current_trace)
-                    _send_trace_background(current_trace, cfg, cfg.default_metrics if cfg.auto_eval else None)
+                    _eval_metrics = (metrics or cfg.default_metrics) if cfg.auto_eval else None
+                    _send_trace_background(current_trace, cfg, _eval_metrics)
                     ObTracContext.reset_trace(trace_token)
                 elif current_trace:
                     current_trace.spans.append(span)
@@ -462,7 +480,8 @@ def trace(
                     current_trace.spans.append(span)
                     current_trace.finish()
                     _collect_context_from_spans(current_trace)
-                    _send_trace_background(current_trace, cfg, cfg.default_metrics if cfg.auto_eval else None)
+                    _eval_metrics = (metrics or cfg.default_metrics) if cfg.auto_eval else None
+                    _send_trace_background(current_trace, cfg, _eval_metrics)
                     ObTracContext.reset_trace(trace_token)
                 elif current_trace:
                     current_trace.spans.append(span)
@@ -531,7 +550,8 @@ def trace(
                     current_trace.spans.append(span)
                     current_trace.finish()
                     _collect_context_from_spans(current_trace)
-                    _send_trace_background(current_trace, cfg, cfg.default_metrics if cfg.auto_eval else None)
+                    _eval_metrics = (metrics or cfg.default_metrics) if cfg.auto_eval else None
+                    _send_trace_background(current_trace, cfg, _eval_metrics)
                     ObTracContext.reset_trace(trace_token)
                 elif current_trace:
                     current_trace.spans.append(span)

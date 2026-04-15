@@ -17,16 +17,31 @@ Run with:
 """
 
 import os
+import sys
+
+# ADK adds test_gadk/ to sys.path — ensure it so sibling packages
+# (tools/, callbacks/) are importable directly.
+_GADK_ROOT = os.path.dirname(os.path.dirname(__file__))   # .../test_gadk/
+_PROJECT_ROOT = os.path.dirname(_GADK_ROOT)               # .../ObTrac/
+for _p in (_GADK_ROOT, _PROJECT_ROOT):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
 from dotenv import load_dotenv
+import litellm
+litellm.drop_params = True  # silently drop params unsupported by this API version
+
 from google.adk.agents import Agent
 from google.adk.models.lite_llm import LiteLlm
 
 from obtrac_sdk import obtrac_config
-from test_gadk.tools.search_tool import web_search
-from test_gadk.tools.calculator_tool import calculator, unit_converter
-from test_gadk.callbacks import (
+from tools.search_tool import web_search
+from tools.calculator_tool import calculator, unit_converter
+from callbacks import (
     obtrac_before_agent,
     obtrac_after_agent,
+    obtrac_before_model,
+    obtrac_after_model,
     obtrac_before_tool,
     obtrac_after_tool,
 )
@@ -46,7 +61,7 @@ _model = LiteLlm(
     model=f"azure/{os.getenv('AZURE_OPENAI_DEPLOYMENT', 'gpt-4o')}",
     api_key=os.getenv("AZURE_OPENAI_API_KEY"),
     api_base=os.getenv("AZURE_OPENAI_ENDPOINT"),
-    api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-01"),
+    api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-12-01-preview"),
 )
 
 root_agent = Agent(
@@ -65,6 +80,8 @@ Give concise, accurate answers. Cite what you found when using web_search.""",
     tools=[web_search, calculator, unit_converter],
     before_agent_callback=obtrac_before_agent,
     after_agent_callback=obtrac_after_agent,
+    before_model_callback=obtrac_before_model,
+    after_model_callback=obtrac_after_model,
     before_tool_callback=obtrac_before_tool,
     after_tool_callback=obtrac_after_tool,
 )
