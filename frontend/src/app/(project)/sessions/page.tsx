@@ -40,16 +40,27 @@ function SessionsContent() {
       {sessions.length === 0 ? (
         <div className="card text-center py-16">
           <h3 className="text-lg font-semibold text-gray-700 mb-2">No sessions yet</h3>
-          <p className="text-sm text-gray-500">
-            Pass <code className="bg-gray-100 px-1 rounded">session_id</code> in <code className="bg-gray-100 px-1 rounded">obtrac_config()</code> to group traces into sessions.
+          <p className="text-sm text-gray-500 max-w-lg mx-auto">
+            Sessions are created automatically when a <code className="bg-gray-100 px-1 rounded">session_id</code> is detected.
+            ObTrac scans your function arguments — no framework-specific code needed.
           </p>
-          <pre className="mt-4 text-xs bg-gray-50 p-3 rounded-lg text-left max-w-md mx-auto text-gray-600">
-{`config = obtrac_config(
-    project="my-app",
-    user="satyam",
-    session_id="conv_abc123",
-)`}
-          </pre>
+          <div className="mt-4 text-left max-w-lg mx-auto space-y-3">
+            <p className="text-xs font-semibold text-gray-500">Option A — pass as a kwarg (works anywhere):</p>
+            <pre className="text-xs bg-gray-50 p-3 rounded-lg text-gray-600">
+{`@trace(name="my_agent")
+def run(query, session_id="conv_abc123"):
+    ...`}
+            </pre>
+            <p className="text-xs font-semibold text-gray-500">Option B — set in config:</p>
+            <pre className="text-xs bg-gray-50 p-3 rounded-lg text-gray-600">
+{`obtrac_config(project="my-app", session_id="conv_abc123")`}
+            </pre>
+            <p className="text-xs font-semibold text-gray-500">Option C — auto-detected from any context object:</p>
+            <pre className="text-xs bg-gray-50 p-3 rounded-lg text-gray-600">
+{`# LangGraph, ADK, CrewAI, custom — any object with
+# .session_id / .thread_id / .conversation_id is auto-picked up`}
+            </pre>
+          </div>
         </div>
       ) : (
         <div className="grid grid-cols-3 gap-6">

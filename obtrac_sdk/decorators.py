@@ -162,12 +162,77 @@ def _resolve_field(field_name, args_dict, result):
     return args_dict.get(field_name, "")
 
 
-def _build_root_trace(cfg, trace_name: str) -> Trace:
+_SESSION_KEYS = ("session_id", "thread_id", "conversation_id", "chat_id", "run_id")
+
+
+def _extract_session_id(args, kwargs) -> str | None:
+    """
+    Scan all function arguments for a conversation/session ID.
+
+    Framework-agnostic — no dependency on LangGraph, ADK, CrewAI, etc.
+    Works with ANY framework or plain Python code that passes a session/thread
+    identifier somewhere in the function signature.
+
+    Detection order (first match wins):
+    1. kwargs with a well-known name  → session_id, thread_id, conversation_id,
+                                        chat_id, run_id
+    2. dict argument keys             → same names (e.g. LangGraph RunnableConfig
+                                        or any config dict)
+    3. nested dict under "configurable" → thread_id  (LangGraph convention)
+    4. object attributes              → same names on any object
+    5. object.session.id              → nested session objects (ADK convention)
+    """
+    # 1. Explicit kwargs — highest priority, zero ambiguity
+    for key in _SESSION_KEYS:
+        v = kwargs.get(key)
+        if v and isinstance(v, str):
+            return v
+
+    all_values = list(args) + list(kwargs.values())
+
+    for val in all_values:
+        if val is None:
+            continue
+
+        # 2 & 3. Dict arguments
+        if isinstance(val, dict):
+            for key in _SESSION_KEYS:
+                v = val.get(key)
+                if v and isinstance(v, str):
+                    return v
+            # Nested configurable sub-dict (LangGraph / LangChain convention)
+            nested = val.get("configurable")
+            if isinstance(nested, dict):
+                for key in _SESSION_KEYS:
+                    v = nested.get(key)
+                    if v and isinstance(v, str):
+                        return v
+
+        # 4. Object attributes — works for any dataclass, Pydantic model, custom class
+        for attr in _SESSION_KEYS:
+            v = getattr(val, attr, None)
+            if v and isinstance(v, str):
+                return v
+
+        # 5. Nested .session object — .session.id or .session.session_id
+        session = getattr(val, "session", None)
+        if session is not None:
+            for attr in ("id", "session_id"):
+                v = getattr(session, attr, None)
+                if v and isinstance(v, str):
+                    return v
+
+    return None
+
+
+def _build_root_trace(cfg, trace_name: str, args=(), kwargs=None) -> Trace:
+    # Explicit config session_id wins; fall back to auto-detection from args
+    session_id = cfg.session_id or _extract_session_id(args, kwargs or {})
     return Trace(
         project=cfg.project,
         name=trace_name,
         user=cfg.user,
-        session_id=cfg.session_id,
+        session_id=session_id or "",
     )
 
 
@@ -280,8 +345,7 @@ def trace(
             trace_token = None
 
             if is_root:
-                current_trace = _build_root_trace(cfg, span_name)
-                # Extract query from first arg (override with field map below)
+                current_trace = _build_root_trace(cfg, span_name, args, kwargs)
                 if args:
                     current_trace.query = str(args[0])
                 trace_token = ObTracContext.set_current_trace(current_trace)
@@ -343,7 +407,7 @@ def trace(
             trace_token = None
 
             if is_root:
-                current_trace = _build_root_trace(cfg, span_name)
+                current_trace = _build_root_trace(cfg, span_name, args, kwargs)
                 if args:
                     current_trace.query = str(args[0])
                 trace_token = ObTracContext.set_current_trace(current_trace)
@@ -404,7 +468,7 @@ def trace(
             trace_token = None
 
             if is_root:
-                current_trace = _build_root_trace(cfg, span_name)
+                current_trace = _build_root_trace(cfg, span_name, args, kwargs)
                 if args:
                     current_trace.query = str(args[0])
                 trace_token = ObTracContext.set_current_trace(current_trace)
