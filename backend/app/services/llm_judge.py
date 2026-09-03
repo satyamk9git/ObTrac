@@ -98,6 +98,20 @@ Score from 0.0 to 1.0 where:
 - 0.0 = Completely different meaning or topic
 
 Reply ONLY with JSON: {{"score": 0.0-1.0, "reason": "one line explanation"}}""",
+
+    "context_entities_recall": """You are an evaluation judge. Identify the key entities (names, dates, numbers, places, products, technical terms) mentioned in the ground truth answer, then score what fraction of those entities also appear somewhere in the retrieved context.
+This is entity-level recall, distinct from context_recall's fact-level recall — a context can contain the right general facts while still missing specific entities (a wrong date, a missing product name) that make the answer verifiable.
+
+Ground Truth: {ground_truth}
+Retrieved Context:
+{context}
+
+Score from 0.0 to 1.0 where:
+- 1.0 = Every key entity in the ground truth is present in the retrieved context
+- 0.5 = About half of the key entities are present
+- 0.0 = None of the key entities from the ground truth appear in the context
+
+Reply ONLY with JSON: {{"score": 0.0-1.0, "reason": "one line explanation"}}""",
 }
 
 

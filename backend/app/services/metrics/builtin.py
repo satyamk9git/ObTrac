@@ -1,5 +1,10 @@
 """
-ObTrac's 6 original RAGAS-style metrics, now expressed as MetricDefinition
+RAGAS-catalog metrics (Faithfulness, Answer Relevancy, Context Precision/
+Recall/Entities Recall, Answer Correctness/Similarity — same names and
+methodology as RAGAS's own docs), scored via direct LLM-judge prompts
+rather than the actual `ragas` package, which has an unresolvable
+dependency conflict with langgraph/langchain-openai in this stack (see
+pyproject.toml's `ragas` extra comment). Expressed as MetricDefinition
 instances instead of the four hardcoded dicts they used to live in
 (JUDGE_PROMPTS + METRIC_INFO + SuggestionEngine.RULES + METRIC_KNOWLEDGE).
 
@@ -24,7 +29,7 @@ class LLMJudgeMetric(MetricDefinition):
     """A metric scored by asking a judge LLM to fill in a prompt template
     and return {"score": 0.0-1.0, "reason": "..."} as JSON."""
 
-    source = "obtrac"
+    source = "ragas"
 
     def __init__(self, key: str, prompt_template: str, **info):
         self.key = key
@@ -160,6 +165,25 @@ _METRIC_METADATA = {
             "Improve retrieval to fetch more relevant context",
             "Use a stronger generation model",
             "Add few-shot examples to your prompt",
+        ],
+    },
+    "context_entities_recall": {
+        "name": "Context Entities Recall",
+        "description": "Measures whether specific entities (names, dates, numbers, places) from the ground truth appear in the retrieved context.",
+        "needs_ground_truth": True,
+        "needs_context": True,
+        "threshold": 0.6,
+        "category": "Retrieval Quality",
+        "what_it_measures": "Entity-level recall — distinct from context_recall's broader fact-level recall.",
+        "score_interpretation": {
+            "good": ">=0.8 — Nearly all key entities present in context",
+            "warning": "0.5-0.8 — Some key entities missing from context",
+            "bad": "<0.5 — Most key entities missing, answer likely can't be verified from context",
+        },
+        "improvement_tips": [
+            "Check if entity-bearing documents (with exact names/dates/numbers) are in your index at all",
+            "Verify chunking doesn't split entities from their surrounding context",
+            "Use metadata filters or named-entity-aware retrieval for entity-heavy queries",
         ],
     },
     "answer_similarity": {

@@ -52,9 +52,14 @@ def get_registry() -> MetricRegistry:
 
 
 def register_builtin_metrics(registry: MetricRegistry) -> None:
-    from app.services.metrics.builtin import build_metrics
+    from app.services.metrics.builtin import build_metrics as build_judge_metrics
+    from app.services.metrics.deterministic import build_metrics as build_deterministic_metrics
 
-    for metric in build_metrics():
+    for metric in build_judge_metrics():
+        registry.register(metric)
+    # Deterministic metrics are pure Python (stdlib only) — always available,
+    # not gated behind an optional-dependency guard like DeepEval/Phoenix.
+    for metric in build_deterministic_metrics():
         registry.register(metric)
 
 

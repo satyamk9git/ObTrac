@@ -9,7 +9,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 
 const METRIC_SOURCE_LABELS: Record<string, string> = {
-  obtrac: "Cortexa Built-in",
+  ragas: "RAGAS-style",
   deepeval: "DeepEval",
   arize: "Arize Phoenix",
   mlflow: "MLflow",
@@ -536,7 +536,7 @@ function TraceDetailContent() {
             options={Object.entries(info).map(([key, mi]: [string, any]): PickerOption => ({
               value: key,
               label: mi.name,
-              group: mi.source || "obtrac",
+              group: mi.source || "ragas",
               badge: mi.needs_ground_truth ? "GT" : undefined,
             }))}
             selected={selectedMetrics}

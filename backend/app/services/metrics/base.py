@@ -76,7 +76,7 @@ class MetricDefinition(ABC):
     key: str = ""
     display_name: str = ""
     category: str = "Uncategorized"
-    source: str = "obtrac"  # "obtrac" | "deepeval" | "mlflow" | "arize" | "custom"
+    source: str = "custom"  # "ragas" | "deepeval" | "mlflow" | "arize" | "custom"
     needs_ground_truth: bool = False
     needs_context: bool = False
     threshold: float = 0.7

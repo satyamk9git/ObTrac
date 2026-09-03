@@ -5,7 +5,7 @@
 // This scales to any future registry growth with zero enumeration: a new
 // source just needs one more palette entry here.
 const SOURCE_HUES: Record<string, string[]> = {
-  obtrac: ["#4f46e5", "#6366f1", "#818cf8", "#a5b4fc"], // indigo — brand
+  ragas: ["#4f46e5", "#6366f1", "#818cf8", "#a5b4fc"], // indigo — brand
   deepeval: ["#0d9488", "#14b8a6", "#2dd4bf", "#5eead4"], // teal
   arize: ["#c026d3", "#d946ef", "#e879f9", "#f0abfc"], // fuchsia
   mlflow: ["#ea580c", "#f97316", "#fb923c", "#fdba74"], // orange (ready for when that adapter lands)
@@ -30,7 +30,7 @@ export function buildMetricColorMap(
   const countBySource: Record<string, number> = {};
   const colors: Record<string, string> = {};
   for (const key of metricKeys) {
-    const source = metricInfo[key]?.source || "obtrac";
+    const source = metricInfo[key]?.source || "ragas";
     const index = countBySource[source] || 0;
     countBySource[source] = index + 1;
     colors[key] = getMetricColor(source, index);

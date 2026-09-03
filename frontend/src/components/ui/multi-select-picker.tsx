@@ -28,7 +28,7 @@ export type PickerOption = {
 // Fixed priority so related items (e.g. the same metric from different
 // evaluation frameworks) land under separate, ordered, labeled headings
 // instead of registry/array insertion order.
-const GROUP_ORDER = ["obtrac", "deepeval", "arize", "mlflow", "custom"];
+const GROUP_ORDER = ["ragas", "deepeval", "arize", "mlflow", "custom"];
 
 type MultiSelectPickerProps = {
   options: PickerOption[];

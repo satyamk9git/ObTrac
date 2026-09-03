@@ -111,7 +111,54 @@ class DeepEvalMetricAdapter(MetricDefinition):
             return MetricResult(metric=self.key, error=str(e))
 
 
-def build_metrics() -> list[DeepEvalMetricAdapter]:
+class GEvalMetricAdapter(MetricDefinition):
+    """GEval is DeepEval's plain-English-criteria LLM judge — the same
+    mechanism the (backlogged) custom-metric-authoring feature will use to
+    compile a user-written rubric into a runnable metric. These three
+    instances are fixed presets (general-purpose answer-quality checks that
+    don't need a rubric-authoring UI to be useful), not user-customizable
+    yet — registered the same way as any other built-in metric."""
+
+    source = "deepeval"
+    category = "DeepEval"
+
+    def __init__(self, key: str, display_name: str, description: str, criteria: str, threshold: float = 0.6):
+        self.key = key
+        self.display_name = display_name
+        self.description = description
+        self.what_it_measures = description
+        self.threshold = threshold
+        self._criteria = criteria
+        self.improvement_tips = [
+            "See DeepEval's G-Eval docs: https://deepeval.com/docs/metrics-llm-evals",
+        ]
+
+    def score(self, inp: MetricInput, judge_llm: "LLMConfigRecord | None") -> MetricResult:
+        if judge_llm is None:
+            return MetricResult(metric=self.key, error="No judge LLM configured")
+        try:
+            from deepeval.metrics import GEval
+            from deepeval.test_case import LLMTestCaseParams
+
+            model = _ObTracDeepEvalModel(judge_llm)
+            metric = GEval(
+                name=self.display_name,
+                criteria=self._criteria,
+                evaluation_params=[LLMTestCaseParams.INPUT, LLMTestCaseParams.ACTUAL_OUTPUT],
+                model=model, threshold=self.threshold, async_mode=False,
+            )
+            test_case = _test_case_from_input(inp)
+            metric.measure(test_case)
+            score = MetricResult.clamp_score(metric.score)
+            if score is None:
+                return MetricResult(metric=self.key, error="G-Eval did not return a valid score")
+            return MetricResult(metric=self.key, score=score, reason=getattr(metric, "reason", "") or "")
+        except Exception as e:
+            logger.warning(f"G-Eval metric '{self.key}' failed: {e}")
+            return MetricResult(metric=self.key, error=str(e))
+
+
+def build_metrics() -> list[MetricDefinition]:
     """Raises ImportError if deepeval isn't installed — registry.py catches
     that and simply doesn't register these metrics."""
     from deepeval.metrics import (
@@ -122,6 +169,9 @@ def build_metrics() -> list[DeepEvalMetricAdapter]:
         ContextualRelevancyMetric,
         FaithfulnessMetric,
         HallucinationMetric,
+        MisuseMetric,
+        NonAdviceMetric,
+        PIILeakageMetric,
         ToxicityMetric,
     )
 
@@ -165,5 +215,46 @@ def build_metrics() -> list[DeepEvalMetricAdapter]:
             key="deepeval_toxicity", display_name="Toxicity (DeepEval)",
             description="Detects toxic, harmful, or offensive content in the generated answer.",
             metric_cls=ToxicityMetric, threshold=0.5,
+        ),
+        DeepEvalMetricAdapter(
+            key="deepeval_pii_leakage", display_name="PII Leakage (DeepEval)",
+            description="Detects personally identifiable information (names, emails, phone numbers, IDs) leaked in the generated answer.",
+            metric_cls=PIILeakageMetric, threshold=0.5,
+        ),
+        DeepEvalMetricAdapter(
+            key="deepeval_misuse", display_name="Misuse (DeepEval)",
+            description=(
+                "Detects the answer being used off-purpose — e.g. a support/knowledge-base "
+                "assistant giving unrelated generated code, creative writing, or other "
+                "out-of-domain output instead of answering from its knowledge base."
+            ),
+            metric_cls=MisuseMetric, threshold=0.5,
+            metric_kwargs={"domain": "a RAG assistant answering questions from its own knowledge base"},
+        ),
+        DeepEvalMetricAdapter(
+            key="deepeval_non_advice", display_name="Non-Advice (DeepEval)",
+            description=(
+                "Detects the answer giving regulated professional advice (medical, legal, "
+                "or financial) it isn't qualified to give, rather than general information. "
+                "Uses a generic medical/legal/financial default — most relevant for support "
+                "and knowledge-base assistants in regulated domains."
+            ),
+            metric_cls=NonAdviceMetric, threshold=0.5,
+            metric_kwargs={"advice_types": ["medical", "legal", "financial"]},
+        ),
+        GEvalMetricAdapter(
+            key="geval_conciseness", display_name="Conciseness (G-Eval)",
+            description="Whether the answer is concise and free of unnecessary padding, repetition, or irrelevant tangents.",
+            criteria="Determine whether the actual output is concise — it should directly address the input without unnecessary repetition, padding, or irrelevant tangents.",
+        ),
+        GEvalMetricAdapter(
+            key="geval_clarity", display_name="Clarity (G-Eval)",
+            description="Whether the answer is clearly written and easy to understand, independent of factual correctness.",
+            criteria="Determine whether the actual output is clear and easy to understand — well-structured, unambiguous, and free of confusing phrasing, regardless of whether the content is fully correct.",
+        ),
+        GEvalMetricAdapter(
+            key="geval_coherence", display_name="Coherence (G-Eval)",
+            description="Whether the answer is logically structured and internally consistent, with ideas that flow and don't contradict each other.",
+            criteria="Determine whether the actual output is coherent — ideas should flow logically, later statements should not contradict earlier ones, and the overall structure should make sense as a whole.",
         ),
     ]
