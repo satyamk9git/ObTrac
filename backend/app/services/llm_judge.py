@@ -119,17 +119,27 @@ class _LiteLLMChat:
         return SimpleNamespace(content=resp.choices[0].message.content)
 
 
-def _build_llm(config: LLMConfigRecord):
-    """Build a litellm-backed chat object from config."""
+def _litellm_model_string(config: LLMConfigRecord) -> str:
+    """The litellm `model=` string for a given config, e.g. "anthropic/claude-sonnet-5".
+    Shared with external-framework adapters (deepeval_adapter, phoenix_adapter)
+    that need to address the same judge model litellm-style, not just this
+    module's own _build_llm."""
     prefixes = {
         "openai": "", "azure_openai": "azure/", "anthropic": "anthropic/",
         "gemini": "gemini/", "ollama": "ollama/", "groq": "groq/",
     }
     prefix = prefixes.get(config.provider, "")
     if config.provider == "azure_openai" and config.azure_deployment:
-        model = f"azure/{config.azure_deployment}"
-    else:
-        model = f"{prefix}{config.model_id}"
+        return f"azure/{config.azure_deployment}"
+    return f"{prefix}{config.model_id}"
+
+
+def _build_llm(config: LLMConfigRecord, max_tokens: int = 512):
+    """Build a litellm-backed chat object from config. `max_tokens`
+    defaults to 512 (enough for ObTrac's own short {"score","reason"} judge
+    prompts) but external-framework adapters (e.g. DeepEval, whose internal
+    prompts ask for much longer structured reasoning) pass a higher value."""
+    model = _litellm_model_string(config)
 
     kwargs = {}
     if config.api_key:
@@ -146,7 +156,7 @@ def _build_llm(config: LLMConfigRecord):
     # is active.
     judge_temperature = 1 if config.provider == "anthropic" else 0
     kwargs["temperature"] = judge_temperature
-    kwargs[max_tok] = 512
+    kwargs[max_tok] = max_tokens
     return _LiteLLMChat(model=model, kwargs=kwargs)
 
 

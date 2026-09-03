@@ -54,7 +54,22 @@ dependencies = [
 # with obtrac_sdk.evaluator.RAGASEvaluator directly and are prepared to
 # manage the conflict yourself.
 ragas = ["ragas==0.4.3", "instructor==1.16.0"]
+# Declared but not yet wired to a metrics adapter — obtrac_sdk.evaluator's
+# legacy MLflow path aside, there's no backend/app/services/metrics/
+# mlflow_adapter.py yet (deferred: mlflow pulls in pyarrow, which has no
+# prebuilt wheel on some newer Python builds and needs a from-source Arrow
+# build to install). deepeval/arize below follow the same guarded-import
+# pattern this extra is meant for once an adapter exists.
 mlflow = ["mlflow>=2.14.0,<3.0.0"]
+# DeepEval and Arize Phoenix's evals library each add metrics to
+# GET /evaluation/metrics-info via a guarded import in
+# backend/app/services/metrics/registry.py — neither is required for
+# ObTrac's own 6 built-in metrics. Note arize-phoenix-evals is Elastic
+# License 2.0 (ELv2), not permissive like ObTrac's own MIT license — fine
+# as an optional library dependency for self-hosted use, called out here
+# for transparency.
+deepeval = ["deepeval==4.2.1"]
+arize = ["arize-phoenix-evals==3.6.0"]
 postgres = ["psycopg2-binary>=2.9.0,<3.0.0"]  # set DATABASE_URL to postgresql+psycopg2://... to use it
 ui = [
     "streamlit>=1.35.0,<2.0.0",
@@ -70,6 +85,8 @@ all = [
     "ragas==0.4.3",
     "instructor==1.16.0",
     "mlflow>=2.14.0,<3.0.0",
+    "deepeval==4.2.1",
+    "arize-phoenix-evals==3.6.0",
     "streamlit>=1.35.0,<2.0.0",
     "faiss-cpu>=1.8.0,<2.0.0",
     "sentence-transformers>=3.0.0,<7.0.0",
