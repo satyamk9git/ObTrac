@@ -13,6 +13,11 @@ interface Span {
   tokens: Record<string, number>;
   cost_usd: number;
   model: string | null;
+  tool_calls?: { id?: string; name: string; arguments: any }[] | null;
+  tool_name?: string | null;
+  tool_call_id?: string | null;
+  tool_args?: Record<string, any> | null;
+  tool_result?: any;
 }
 
 function SpanNode({ span, children }: { span: Span; children: Span[] }) {
@@ -43,11 +48,53 @@ function SpanNode({ span, children }: { span: Span; children: Span[] }) {
         {span.model && (
           <span className="text-[10px] bg-[#252a3f] text-gray-400 px-1.5 py-0.5 rounded">{span.model}</span>
         )}
+        {span.tool_name && (
+          <span className="text-[10px] bg-yellow-500/15 text-yellow-400 px-1.5 py-0.5 rounded font-mono">
+            🔧 {span.tool_name}
+          </span>
+        )}
+        {span.tool_calls && span.tool_calls.length > 0 && (
+          <span className="text-[10px] bg-yellow-500/15 text-yellow-400 px-1.5 py-0.5 rounded">
+            requested {span.tool_calls.length} tool call{span.tool_calls.length !== 1 ? "s" : ""}
+          </span>
+        )}
       </div>
 
       {span.error && (
         <div className="text-xs text-red-400 bg-red-500/10 p-2 rounded mt-1 border border-red-500/20">
           {span.error}
+        </div>
+      )}
+
+      {span.tool_name && (
+        <div className="text-xs mt-1 bg-yellow-500/5 border border-yellow-500/20 rounded p-2 space-y-1">
+          <div>
+            <span className="font-medium text-yellow-400">Tool: </span>
+            <span className="text-gray-300 font-mono">{span.tool_name}</span>
+          </div>
+          {span.tool_args && Object.keys(span.tool_args).length > 0 && (
+            <div>
+              <span className="font-medium text-gray-400">Args: </span>
+              <span className="text-gray-500 font-mono">{JSON.stringify(span.tool_args)}</span>
+            </div>
+          )}
+          {span.tool_result != null && (
+            <div>
+              <span className="font-medium text-gray-400">Result: </span>
+              <span className="text-gray-500">{String(span.tool_result).substring(0, 300)}</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {span.tool_calls && span.tool_calls.length > 0 && (
+        <div className="text-xs mt-1 bg-yellow-500/5 border border-yellow-500/20 rounded p-2 space-y-1">
+          <span className="font-medium text-yellow-400">Requested tool calls:</span>
+          {span.tool_calls.map((c, i) => (
+            <div key={c.id || i} className="text-gray-500 font-mono pl-2">
+              {c.name}({JSON.stringify(c.arguments)})
+            </div>
+          ))}
         </div>
       )}
 
