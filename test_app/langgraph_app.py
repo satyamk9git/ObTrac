@@ -5,6 +5,8 @@ import os
 import time
 import json
 import tempfile
+from types import SimpleNamespace
+import litellm
 import streamlit as st
 from dotenv import load_dotenv
 
@@ -14,29 +16,61 @@ from langchain_community.document_loaders import PyPDFLoader, TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.chat_models import ChatLiteLLM
 from langgraph.graph import StateGraph, END
 from typing import TypedDict
 
-from obtrac_sdk import obtrac_config, trace, observe, get_prompt
+from obtrac_sdk import obtrac_config, trace, get_prompt
 
 st.set_page_config(page_title="LangGraph + ObTrac", page_icon="🕸️", layout="wide")
+
+RAG_EVAL_METRICS = [
+    "faithfulness",
+    "answer_relevancy",
+    "context_precision",
+    "context_recall",
+    "answer_correctness",
+    "answer_similarity",
+]
 
 config = obtrac_config(
     project="langgraph-agent",
     backend_url="http://localhost:8100",
     user="satyam",
-    auto_eval=False,
+    auto_eval=True,
+    default_metrics=RAG_EVAL_METRICS,
     session_id=f"lg_{hash(id(st.session_state)) % 100000}",
 )
 
-llm = ChatLiteLLM(
-    model=f"azure/{os.getenv('AZURE_OPENAI_DEPLOYMENT')}",
-    api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-    api_base=os.getenv("AZURE_OPENAI_ENDPOINT"),
-    api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
-    max_completion_tokens=1024,
-    temperature=0.3,
+
+class _LiteLLMChat:
+    """Minimal ChatLiteLLM replacement — langchain_community 0.4.x removed
+    ChatLiteLLM entirely, so call litellm directly and keep the same
+    `.invoke(text) -> obj.content` interface the rest of this file expects."""
+
+    def __init__(self, model, api_key, max_tokens, temperature):
+        self.model = model
+        self.api_key = api_key
+        self.max_tokens = max_tokens
+        self.temperature = temperature
+
+    def invoke(self, prompt_text: str):
+        resp = litellm.completion(
+            model=self.model,
+            api_key=self.api_key,
+            max_tokens=self.max_tokens,
+            temperature=self.temperature,
+            messages=[{"role": "user", "content": prompt_text}],
+        )
+        return SimpleNamespace(content=resp.choices[0].message.content)
+
+
+llm = _LiteLLMChat(
+    model="anthropic/claude-sonnet-5",
+    api_key=os.getenv("ANTHROPIC_API_KEY"),
+    max_tokens=1024,
+    # Claude Sonnet 5 runs extended thinking by default and rejects any
+    # temperature other than 1 while thinking is active.
+    temperature=1,
 )
 
 @st.cache_resource
@@ -64,36 +98,39 @@ class RAGState(TypedDict):
 
 # --- Graph Nodes (each traced) ---
 @trace(name="lg_retrieve", span_type="retrieval")
-def retrieve_node(state: RAGState) -> RAGState:
+def retrieve_node(state: RAGState) -> dict:
     vs = st.session_state.get("lg_vs")
     if vs:
         docs = vs.similarity_search(state["query"], k=5)
-        state["chunks"] = [d.page_content for d in docs]
-        state["context"] = "\n\n".join(state["chunks"])
+        chunks = [d.page_content for d in docs]
+        context = "\n\n".join(chunks)
     else:
-        state["chunks"] = []
-        state["context"] = "No document uploaded."
-    return state
+        chunks = []
+        context = "No document uploaded."
+    # Return only the keys this node updates (LangGraph merges partial state
+    # updates) — returning the whole `state` dict here previously meant the
+    # retrieval span's output (and therefore the auto-backfilled trace
+    # context used by RAGAS scoring) was polluted with the raw query and
+    # duplicated chunk list instead of just the retrieved text.
+    return {"chunks": chunks, "context": context}
 
-@trace(name="lg_generate", span_type="generation", model="gpt-4o",
-       cost={"input_token_cost": 0.0025, "output_token_cost": 0.01})
-def generate_node(state: RAGState) -> RAGState:
+@trace(name="lg_generate", span_type="generation", model="claude-sonnet-5",
+       cost={"input_token_cost": 0.002, "output_token_cost": 0.01})
+def generate_node(state: RAGState) -> dict:
     # Fetch the active version of "rag_answer" prompt from ObTrac registry
     prompt = get_prompt("rag_answer")
     rendered = prompt.render(context=state["context"], question=state["query"])
     response = llm.invoke(rendered)
-    state["answer"] = response.content
-    return state
+    return {"answer": response.content}
 
-@trace(name="lg_review", span_type="generation", model="gpt-4o",
-       cost={"input_token_cost": 0.0025, "output_token_cost": 0.01})
-def review_node(state: RAGState) -> RAGState:
+@trace(name="lg_review", span_type="generation", model="claude-sonnet-5",
+       cost={"input_token_cost": 0.002, "output_token_cost": 0.01})
+def review_node(state: RAGState) -> dict:
     # Fetch the active version of "review_prompt" from ObTrac registry
     prompt = get_prompt("review_prompt")
     rendered = prompt.render(question=state["query"], answer=state["answer"])
     response = llm.invoke(rendered)
-    state["review"] = response.content
-    return state
+    return {"review": response.content}
 
 # --- Build Graph ---
 workflow = StateGraph(RAGState)
@@ -106,11 +143,12 @@ workflow.add_edge("generate", "review")
 workflow.add_edge("review", END)
 graph = workflow.compile()
 
-@observe(name="langgraph_rag", metrics=["faithfulness", "answer_relevancy"])
+@trace(name="langgraph_rag", span_type="agent", metrics=RAG_EVAL_METRICS)
 def run_graph(query):
     result = graph.invoke({"query": query})
-    # Return answer text so @observe captures it correctly for RAGAS
-    # Store full result in session for UI access
+    # Return the clean answer text so @trace's default root-mode field
+    # mapping (return value -> trace.answer) captures it without noise.
+    # Store the full result in session for UI access.
     st.session_state._lg_last_result = result
     return result.get("answer", str(result))
 

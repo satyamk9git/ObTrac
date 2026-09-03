@@ -12,9 +12,10 @@ Demonstrates:
 import json
 import os
 import re
+from types import SimpleNamespace
 
+import litellm
 from dotenv import load_dotenv
-from langchain_community.chat_models import ChatLiteLLM
 
 from obtrac_sdk import trace, get_prompt
 from test_app.tools import calculator, get_datetime, web_search, summarize_text, unit_converter
@@ -22,27 +23,37 @@ from test_app.tools import calculator, get_datetime, web_search, summarize_text,
 load_dotenv()
 
 # ---------------------------------------------------------------------------
-# LLM setup (Azure OpenAI via LiteLLM — works with any provider)
+# LLM setup (Anthropic via LiteLLM)
 # ---------------------------------------------------------------------------
 
-def _make_llm():
-    deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT")
-    api_key = os.getenv("AZURE_OPENAI_API_KEY")
-    endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
-    api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-01")
+class _LiteLLMChat:
+    """Minimal ChatLiteLLM replacement — langchain_community 0.4.x removed
+    ChatLiteLLM entirely, so call litellm directly and keep the same
+    `.invoke(text) -> obj.content` interface the rest of this file expects."""
 
-    if not all([deployment, api_key, endpoint]):
-        raise RuntimeError(
-            "Missing Azure OpenAI env vars: AZURE_OPENAI_DEPLOYMENT, "
-            "AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT"
+    def __init__(self, model, api_key, max_tokens, temperature):
+        self.model, self.api_key, self.max_tokens, self.temperature = model, api_key, max_tokens, temperature
+
+    def invoke(self, prompt_text: str):
+        resp = litellm.completion(
+            model=self.model, api_key=self.api_key,
+            max_tokens=self.max_tokens, temperature=self.temperature,
+            messages=[{"role": "user", "content": prompt_text}],
         )
-    return ChatLiteLLM(
-        model=f"azure/{deployment}",
+        return SimpleNamespace(content=resp.choices[0].message.content)
+
+
+def _make_llm():
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise RuntimeError("Missing ANTHROPIC_API_KEY env var")
+    return _LiteLLMChat(
+        model="anthropic/claude-sonnet-5",
         api_key=api_key,
-        api_base=endpoint,
-        api_version=api_version,
-        max_completion_tokens=512,
-        temperature=0.2,
+        max_tokens=512,
+        # Claude Sonnet 5 runs extended thinking by default and rejects any
+        # temperature other than 1 while thinking is active.
+        temperature=1,
     )
 
 # ---------------------------------------------------------------------------
@@ -90,8 +101,8 @@ def _get_prompt_safe(name: str, fallback: str) -> str:
 # Traced LLM call (child span)
 # ---------------------------------------------------------------------------
 
-@trace(name="llm_call", span_type="generation",
-       cost={"input_token_cost": 0.003, "output_token_cost": 0.012})
+@trace(name="llm_call", span_type="generation", model="claude-sonnet-5",
+       cost={"input_token_cost": 0.002, "output_token_cost": 0.01})
 def llm_call(prompt_text: str, session_id: str = "") -> str:
     """Single LLM call — appears as a generation span inside the agent trace."""
     llm = _make_llm()

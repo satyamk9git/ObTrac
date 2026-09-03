@@ -1,0 +1,92 @@
+SOLSTICE ROBOTICS, INC.
+Q3 2026 Earnings Summary — Fiscal Quarter Ended September 30, 2026
+(Unaudited internal summary, prepared for the investor relations portal)
+
+SECTION 1 — COMPANY OVERVIEW
+
+Solstice Robotics, Inc. designs, manufactures, and services autonomous warehouse
+picking robots under the AetherArm product line. The company's flagship product,
+the AetherArm-7, is a six-axis robotic picking arm paired with a proprietary
+vision-guided grasping system, sold primarily to mid-size third-party logistics
+(3PL) warehouses and regional distribution centers across North America. Solstice
+was founded in Fremont, California, and operates a single manufacturing facility
+in Reno, Nevada, along with a regional service and spare-parts depot in Columbus,
+Ohio. The company's business model combines an upfront hardware sale with an
+ongoing software-and-maintenance subscription attached to each deployed unit.
+Solstice competes in the broader warehouse-automation hardware category, where
+demand has been shaped by continued e-commerce fulfillment growth and persistent
+warehouse labor shortages. Management describes the AetherArm-7 as the centerpiece
+of the company's near-term strategy, with future product lines still in early
+internal design review and not yet ready for disclosure. This summary reports
+results for the third fiscal quarter of 2026, covering the three-month
+period from July 1, 2026 through September 30, 2026.
+
+SECTION 2 — Q3 2026 FINANCIAL HIGHLIGHTS
+
+For the quarter ended September 30, 2026, Solstice Robotics reported revenue of
+$58.4 million, gross margin of 61%, and net income of $6.1 million. Operating
+cash flow for the quarter was $9.8 million. Total AetherArm-7 units shipped
+during Q3 2026 were 1,240, at an average selling price of approximately $42,000
+per unit, including the attached first-year software subscription. The company
+ended the quarter with 187 active warehouse deployments, representing customers
+with at least one AetherArm-7 unit installed and operating. Customer churn
+during Q3 2026 — defined as customers that discontinued their software
+subscription and did not renew — was 3.2%. Research and development spend
+during the quarter was $11.2 million, or approximately 19% of quarterly revenue.
+Selling, general and administrative expenses for the quarter were $8.7 million.
+The company's cash and short-term investments balance stood at $74.5 million as
+of September 30, 2026.
+
+SECTION 3 — PRODUCT AND OPERATIONS UPDATE (Q3 2026)
+
+During the third quarter of 2026, Solstice shipped firmware version 4.3 to the
+AetherArm-7 fleet, which the engineering team says improved average pick-cycle
+time and reduced misgrasp rate on soft-packaged items. The company also began
+shipping an optional heavy-duty gripper attachment designed for palletized
+goods above 15 kilograms, available as a paid add-on starting in August 2026.
+Three new warehouse operators signed multi-unit deployment agreements during
+the quarter: LogiCore Distribution, Fenwick Freight Systems, and Turnkey Pallet
+Co., all announced via press release in August 2026. Installation of units for
+these three new accounts is expected to begin in the fourth quarter of 2026.
+The Reno manufacturing facility operated at approximately 78% of rated capacity
+during Q3 2026, and the company noted no material supply chain disruptions
+during the quarter. The Columbus service depot completed 340 field service
+visits in Q3 2026, with a median technician response time of 1.8 business days.
+The company also piloted a remote-diagnostics dashboard with a small subset of
+customers during the quarter, with a broader rollout under internal evaluation.
+
+SECTION 4 — LEADERSHIP COMMENTARY
+
+"Q3 was a quarter of steady execution for the team, and I'm proud of how the
+organization continues to focus on reliability and customer trust," said the
+company's Chief Executive Officer in the quarter's internal summary. "Our job
+is to keep making the AetherArm-7 easier to deploy and easier to trust on a
+warehouse floor, and I think this quarter's operational numbers reflect that
+discipline." The Chief Financial Officer added: "We remain focused on
+disciplined spending and healthy unit economics as we continue to invest in
+the platform. The team delivered a solid quarter, and we're pleased with how
+gross margin and cash generation trended during the period."
+
+SECTION 5 — RISK FACTORS (STANDARD BOILERPLATE)
+
+This summary contains forward-looking statements that are subject to risks and
+uncertainties, including but not limited to: fluctuations in warehouse capital
+spending by prospective customers, availability of key electronic components,
+competition from other automation vendors, the company's ability to scale
+manufacturing at the Reno facility, dependence on a small number of large
+logistics customers, potential software defects in fleet firmware releases,
+and general macroeconomic conditions affecting the logistics and e-commerce
+sectors. The company undertakes no obligation to publicly update any
+forward-looking statement except as required by applicable regulations.
+
+SECTION 6 — OUTLOOK FOR Q4 2026
+
+Based on current bookings and the three new deployment agreements signed in
+Q3 2026, management's internal outlook for the fourth quarter of 2026 (October
+1, 2026 through December 31, 2026) is for revenue between $61 million and $64
+million, with unit shipments expected between 1,300 and 1,400 AetherArm-7
+units. This outlook reflects the beginning of installation work for LogiCore
+Distribution, Fenwick Freight Systems, and Turnkey Pallet Co., alongside
+continued renewal activity from the existing 187-account installed base.
+
+END OF Q3 2026 EARNINGS SUMMARY

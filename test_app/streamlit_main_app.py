@@ -18,7 +18,9 @@ import sys
 import tempfile
 import time
 import uuid
+from types import SimpleNamespace
 
+import litellm
 import streamlit as st
 from dotenv import load_dotenv
 
@@ -27,7 +29,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 load_dotenv()
 
-from langchain_community.chat_models import ChatLiteLLM
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
@@ -63,26 +64,53 @@ if "turn_count" not in st.session_state:
 # ---------------------------------------------------------------------------
 # ObTrac config
 # ---------------------------------------------------------------------------
+RAG_EVAL_METRICS = [
+    "faithfulness",
+    "answer_relevancy",
+    "context_precision",
+    "context_recall",
+    "answer_correctness",
+    "answer_similarity",
+]
+
 cfg = obtrac_config(
     project="obtrac-test-app",
     backend_url="http://localhost:8100",
     user="satyam",
-    auto_eval=False,
+    auto_eval=True,
+    default_metrics=RAG_EVAL_METRICS,
     session_id=st.session_state.session_id,
 )
 
 # ---------------------------------------------------------------------------
 # LLM factory
 # ---------------------------------------------------------------------------
+class _LiteLLMChat:
+    """Minimal ChatLiteLLM replacement — langchain_community 0.4.x removed
+    ChatLiteLLM entirely, so call litellm directly and keep the same
+    `.invoke(text) -> obj.content` interface the rest of this file expects."""
+
+    def __init__(self, model, api_key, max_tokens, temperature):
+        self.model, self.api_key, self.max_tokens, self.temperature = model, api_key, max_tokens, temperature
+
+    def invoke(self, prompt_text: str):
+        resp = litellm.completion(
+            model=self.model, api_key=self.api_key,
+            max_tokens=self.max_tokens, temperature=self.temperature,
+            messages=[{"role": "user", "content": prompt_text}],
+        )
+        return SimpleNamespace(content=resp.choices[0].message.content)
+
+
 @st.cache_resource
 def get_llm():
-    return ChatLiteLLM(
-        model=f"azure/{os.getenv('AZURE_OPENAI_DEPLOYMENT')}",
-        api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-        api_base=os.getenv("AZURE_OPENAI_ENDPOINT"),
-        api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-01"),
-        max_completion_tokens=800,
-        temperature=0.3,
+    return _LiteLLMChat(
+        model="anthropic/claude-sonnet-5",
+        api_key=os.getenv("ANTHROPIC_API_KEY"),
+        max_tokens=800,
+        # Claude Sonnet 5 runs extended thinking by default and rejects any
+        # temperature other than 1 while thinking is active.
+        temperature=1,
     )
 
 @st.cache_resource
@@ -123,8 +151,8 @@ def render_template(template: str, **kwargs) -> str:
 # Traced functions for each mode
 # ---------------------------------------------------------------------------
 
-@trace(name="simple_chat", span_type="generation",
-       cost={"input_token_cost": 0.003, "output_token_cost": 0.012})
+@trace(name="simple_chat", span_type="generation", model="claude-sonnet-5",
+       cost={"input_token_cost": 0.002, "output_token_cost": 0.01})
 def simple_chat(question: str, session_id: str = "") -> str:
     """Direct Q&A — @trace creates the root trace, session_id auto-detected."""
     tpl = get_template("simple_chat")
@@ -140,8 +168,8 @@ def rag_retrieve(query: str, vectorstore, k: int = 5, session_id: str = "") -> s
     return "\n\n".join(d.page_content for d in docs)
 
 
-@trace(name="rag_generate", span_type="generation",
-       cost={"input_token_cost": 0.003, "output_token_cost": 0.012})
+@trace(name="rag_generate", span_type="generation", model="claude-sonnet-5",
+       cost={"input_token_cost": 0.002, "output_token_cost": 0.01})
 def rag_generate(question: str, context: str, session_id: str = "") -> str:
     """Generate answer from context — child span inside rag_pipeline."""
     tpl = get_template("rag_answer")
@@ -150,8 +178,8 @@ def rag_generate(question: str, context: str, session_id: str = "") -> str:
     return llm.invoke(prompt).content
 
 
-@trace(name="rag_review", span_type="generation",
-       cost={"input_token_cost": 0.003, "output_token_cost": 0.012})
+@trace(name="rag_review", span_type="generation", model="claude-sonnet-5",
+       cost={"input_token_cost": 0.002, "output_token_cost": 0.01})
 def rag_review(question: str, answer: str, session_id: str = "") -> str:
     """Review the generated answer — child span inside rag_pipeline."""
     tpl = get_template("review_prompt")

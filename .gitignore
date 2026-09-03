@@ -66,9 +66,15 @@ desktop.ini
 .cache/
 *.bak
 
+# ===== Generated test-run output (not fixtures, safe to regenerate) =====
+test_app/session_run_log.json
+test_documents/eval_results.json
+test_documents/session_log.json
+
 # ===== Local pitch / sales artifacts (kept out of repo) =====
 BUSINESS_PITCH.txt
 PPT_CONTENT_FOR_GEMINI.txt
 ObTrac_Pitch.pptx
+OBTRAC_2Slides.pptx
 generate_pitch_ppt.py
 PitchIN/
