@@ -68,7 +68,7 @@ const globalNav: NavItem[] = [
   { name: "Projects", href: "/", icon: Icon.home },
   { name: "Prompts", href: "/prompts", icon: Icon.prompts },
   { name: "LLM Config", href: "/llm-config", icon: Icon.llm },
-  { name: "Embedder Config", href: "/embedder", icon: Icon.embedder, badge: "New" },
+  { name: "Embedder Config", href: "/embedder", icon: Icon.embedder },
   { name: "DB Config", href: "/db-config", icon: Icon.database, badge: "Soon" },
   { name: "Resources", href: "/resources", icon: Icon.resources },
   { name: "SQL Editor", href: "/sql-editor", icon: Icon.sql },
@@ -204,7 +204,7 @@ export default function Sidebar({ project }: { project?: string }) {
 
       {/* Footer */}
       <div className="px-4 py-3 border-t border-gray-200 text-[10px] text-gray-400 flex items-center justify-between">
-        <span>v0.6.4</span>
+        <span>v0.6.8</span>
         <span className="text-gray-300">•</span>
         <span>Open Source</span>
       </div>

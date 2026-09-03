@@ -1,4 +1,4 @@
-export const API_BASE = "http://localhost:8100/api/v1";
+export const API_BASE = "/api/v1";
 
 export async function apiFetch(path: string, options?: RequestInit) {
   const res = await fetch(`${API_BASE}${path}`, options);

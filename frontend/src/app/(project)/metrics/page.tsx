@@ -8,7 +8,7 @@ import {
   Tooltip, ResponsiveContainer, Legend,
 } from "recharts";
 
-const API = "http://localhost:8100/api/v1";
+const API = "/api/v1";
 const METRIC_COLORS: Record<string, string> = {
   faithfulness: "#6366f1",
   answer_relevancy: "#8b5cf6",
@@ -437,9 +437,16 @@ function MetricsContent() {
               <thead>
                 <tr>
                   <th>Query</th>
-                  {metricNames.map((m: string) => (
-                    <th key={m} className="text-center">{(info[m]?.name || m).replace(/ /g, "\n").split("\n")[0]}</th>
-                  ))}
+                  {metricNames.map((m: string) => {
+                    const fullName = info[m]?.name || m.replace(/_/g, " ");
+                    const words = fullName.trim().split(/\s+/);
+                    // Multi-word names (e.g. "Answer Relevancy" / "Answer Correctness")
+                    // share a first word — use the last word so columns stay distinct.
+                    const shortLabel = words[words.length - 1];
+                    return (
+                      <th key={m} className="text-center" title={fullName}>{shortLabel}</th>
+                    );
+                  })}
                   <th className="text-center">Avg</th>
                   <th>Latency</th>
                   <th>GT</th>
@@ -506,11 +513,16 @@ function MetricsContent() {
                 {t.suggestions?.[0] && <p className="text-xs text-orange-600 mt-1 truncate">{t.suggestions[0]}</p>}
               </div>
               <div className="flex gap-1 flex-wrap shrink-0">
-                {Object.entries(t.all_metrics || {}).map(([k, v]) => (
-                  <span key={k} className={`text-[10px] px-1.5 py-0.5 rounded ${getScoreBg(v as number)}`}>
-                    {(info[k]?.name || k).split(" ")[0]}: {((v as number) * 100).toFixed(0)}%
-                  </span>
-                ))}
+                {Object.entries(t.all_metrics || {}).map(([k, v]) => {
+                  const fullName = info[k]?.name || k.replace(/_/g, " ");
+                  const words = fullName.trim().split(/\s+/);
+                  const shortLabel = words[words.length - 1];
+                  return (
+                    <span key={k} title={fullName} className={`text-[10px] px-1.5 py-0.5 rounded ${getScoreBg(v as number)}`}>
+                      {shortLabel}: {((v as number) * 100).toFixed(0)}%
+                    </span>
+                  );
+                })}
               </div>
             </div>
           ))}
@@ -834,7 +846,12 @@ function MetricsContent() {
                   <tr>
                     <th>Model</th>
                     <th>Traces</th>
-                    {metricNames.map((m: string) => <th key={m} className="text-center">{(info[m]?.name || m).split(" ")[0]}</th>)}
+                    {metricNames.map((m: string) => {
+                      const fullName = info[m]?.name || m.replace(/_/g, " ");
+                      const words = fullName.trim().split(/\s+/);
+                      const shortLabel = words[words.length - 1];
+                      return <th key={m} className="text-center" title={fullName}>{shortLabel}</th>;
+                    })}
                     <th>Avg Latency</th>
                     <th>Cost</th>
                     <th>Tokens</th>

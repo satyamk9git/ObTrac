@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 
-const API = "http://localhost:8100/api/v1";
+const API = "/api/v1";
 
 export default function SearchBar({ project }: { project?: string }) {
   const [open, setOpen] = useState(false);

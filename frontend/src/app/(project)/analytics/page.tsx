@@ -8,7 +8,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Area, AreaChart,
 } from "recharts";
 
-const API = "http://localhost:8100/api/v1";
+const API = "/api/v1";
 const COLORS = ["#6366f1", "#8b5cf6", "#06b6d4", "#10b981", "#f59e0b", "#ef4444"];
 
 type Period = "daily" | "weekly" | "monthly" | "lifetime";

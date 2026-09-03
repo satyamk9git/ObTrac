@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import ColumnHeader, { SortDir } from "@/components/ColumnHeader";
 
-const API = "http://localhost:8100/api/v1";
+const API = "/api/v1";
 
 function TracesContent() {
   const searchParams = useSearchParams();

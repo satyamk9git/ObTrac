@@ -5,7 +5,7 @@ import { useParams, useSearchParams } from "next/navigation";
 import SpanTree from "@/components/SpanTree";
 import MetricExplainModal from "@/components/MetricExplainModal";
 
-const API = "http://localhost:8100/api/v1";
+const API = "/api/v1";
 
 function TraceDetailContent() {
   const params = useParams();
@@ -91,7 +91,7 @@ function TraceDetailContent() {
     }
     setMatchingPreview(true);
     setMatchPreview(null);
-    fetch(`${API}/resources/ground-truth/match?query=${encodeURIComponent(trace.query)}&dataset_name=${encodeURIComponent(selectedDataset)}&project=${encodeURIComponent(trace.project)}`)
+    fetch(`${API}/resources/ground-truth/match-semantic?query=${encodeURIComponent(trace.query)}&dataset_name=${encodeURIComponent(selectedDataset)}&project=${encodeURIComponent(trace.project)}`)
       .then(r => r.json())
       .then(d => setMatchPreview(d))
       .catch(() => setMatchPreview(null))

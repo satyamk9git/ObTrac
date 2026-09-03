@@ -3,7 +3,13 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 
-const API = "http://localhost:8100/api/v1";
+const API = "/api/v1";
+
+function getQualityColor(v: number) {
+  if (v >= 0.8) return "text-green-600";
+  if (v >= 0.6) return "text-yellow-600";
+  return "text-red-600";
+}
 
 export default function ProjectsPage() {
   const [projects, setProjects] = useState<any[]>([]);
@@ -13,6 +19,8 @@ export default function ProjectsPage() {
   const [newDesc, setNewDesc] = useState("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<{ name: string; count: number } | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const loadProjects = () => {
     fetch(`${API}/traces/projects`)
@@ -25,6 +33,20 @@ export default function ProjectsPage() {
   useEffect(() => {
     loadProjects();
   }, []);
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await fetch(`${API}/traces/projects/${encodeURIComponent(deleteTarget.name)}/purge`, { method: "DELETE" });
+      setDeleteTarget(null);
+      loadProjects();
+    } catch {
+      // leave the confirm dialog open with its existing content on failure
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const handleCreate = async () => {
     const name = newName.trim();
@@ -122,13 +144,29 @@ export default function ProjectsPage() {
       ) : (
         <div className="grid grid-cols-2 gap-4">
           {projects.map((p) => {
-            const successRate = p.count > 0 ? ((p.success / p.count) * 100) : 0;
+            const hasTraces = p.count > 0;
+            const successRate = hasTraces ? (p.success / p.count) * 100 : null;
+            const hasQuality = p.avg_quality_score !== null && p.avg_quality_score !== undefined;
             return (
               <Link
                 key={p.name}
                 href={`/dashboard?project=${encodeURIComponent(p.name)}`}
-                className="card group cursor-pointer hover:border-indigo-300 animate-fade-in"
+                className="card group cursor-pointer hover:border-indigo-300 animate-fade-in relative"
               >
+                <button
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setDeleteTarget({ name: p.name, count: p.count });
+                  }}
+                  title="Delete project"
+                  className="absolute top-3 right-9 p-1 rounded text-gray-300 opacity-0 group-hover:opacity-100 hover:text-red-500 hover:bg-red-50 transition-all"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                </button>
+
                 <div className="flex items-start justify-between mb-3">
                   <div>
                     <h3 className="text-base font-semibold text-gray-900 group-hover:text-indigo-600 transition-colors">
@@ -143,31 +181,40 @@ export default function ProjectsPage() {
                   </svg>
                 </div>
 
-                <div className="grid grid-cols-4 gap-3">
+                <div className="grid grid-cols-5 gap-2">
                   <div>
                     <p className="text-[10px] text-gray-400 uppercase">Traces</p>
                     <p className="text-lg font-bold text-gray-900">{p.count}</p>
                   </div>
                   <div>
                     <p className="text-[10px] text-gray-400 uppercase">Success</p>
-                    <p className={`text-lg font-bold ${successRate >= 90 ? "text-green-600" : successRate >= 70 ? "text-yellow-600" : "text-red-600"}`}>
-                      {successRate.toFixed(0)}%
+                    <p className={`text-lg font-bold ${
+                      successRate === null ? "text-gray-300"
+                      : successRate >= 90 ? "text-green-600" : successRate >= 70 ? "text-yellow-600" : "text-red-600"
+                    }`}>
+                      {successRate === null ? "—" : `${successRate.toFixed(0)}%`}
                     </p>
                   </div>
                   <div>
-                    <p className="text-[10px] text-gray-400 uppercase">Avg Latency</p>
-                    <p className="text-lg font-bold text-gray-900">{p.avg_latency_ms.toFixed(0)}ms</p>
+                    <p className="text-[10px] text-gray-400 uppercase" title="Average RAGAS-style score across evaluated traces — distinct from Success (did the code run without erroring)">Quality</p>
+                    <p className={`text-lg font-bold ${hasQuality ? getQualityColor(p.avg_quality_score) : "text-gray-300"}`}>
+                      {hasQuality ? `${(p.avg_quality_score * 100).toFixed(0)}%` : "—"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-gray-400 uppercase">Latency</p>
+                    <p className="text-lg font-bold text-gray-900">{hasTraces ? `${p.avg_latency_ms.toFixed(0)}ms` : "—"}</p>
                   </div>
                   <div>
                     <p className="text-[10px] text-gray-400 uppercase">Cost</p>
-                    <p className="text-lg font-bold text-gray-900">${p.total_cost_usd.toFixed(4)}</p>
+                    <p className="text-lg font-bold text-gray-900">{hasTraces ? `$${p.total_cost_usd.toFixed(4)}` : "—"}</p>
                   </div>
                 </div>
 
                 <div className="mt-3 w-full bg-gray-100 rounded-full h-1.5">
                   <div
                     className="h-1.5 rounded-full bg-gradient-to-r from-green-500 to-emerald-400 transition-all"
-                    style={{ width: `${successRate}%` }}
+                    style={{ width: `${successRate ?? 0}%` }}
                   />
                 </div>
               </Link>
@@ -238,6 +285,47 @@ export default function ProjectsPage() {
                 className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50"
               >
                 {creating ? "Creating..." : "Create Project"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Project Confirmation */}
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+            onClick={() => !deleting && setDeleteTarget(null)}
+          />
+          <div className="relative w-full max-w-md bg-white rounded-xl shadow-2xl overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h2 className="text-lg font-bold text-gray-900">Delete "{deleteTarget.name}"?</h2>
+            </div>
+            <div className="px-6 py-4">
+              <p className="text-sm text-gray-700">
+                This permanently deletes{" "}
+                <strong>{deleteTarget.count} trace{deleteTarget.count !== 1 ? "s" : ""}</strong>{" "}
+                and all their spans, metrics, and annotations. This cannot be undone.
+              </p>
+              <p className="text-xs text-gray-500 mt-2">
+                Prompts (global) and any budgets/alert channels referencing this project name are not affected.
+              </p>
+            </div>
+            <div className="px-6 py-3 border-t border-gray-200 bg-gray-50 flex justify-end gap-2">
+              <button
+                onClick={() => setDeleteTarget(null)}
+                disabled={deleting}
+                className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                className="px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 disabled:opacity-50"
+              >
+                {deleting ? "Deleting..." : "Delete Permanently"}
               </button>
             </div>
           </div>

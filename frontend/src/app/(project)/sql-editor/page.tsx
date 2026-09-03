@@ -3,7 +3,7 @@
 import { useEffect, useState, Suspense, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 
-const API = "http://localhost:8100/api/v1";
+const API = "/api/v1";
 
 function SQLEditorContent() {
   const searchParams = useSearchParams();
@@ -152,7 +152,7 @@ function SQLEditorContent() {
             </button>
           )}
           <h1 className="text-lg font-bold text-gray-900">SQL Editor</h1>
-          <span className="text-xs text-gray-400 ml-auto">Full access (except DROP) | Ctrl+Enter to run</span>
+          <span className="text-xs text-gray-400 ml-auto">Read-only (enforced at the database connection) | Ctrl+Enter to run</span>
         </div>
 
         {/* SQL Editor */}

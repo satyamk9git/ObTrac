@@ -4,7 +4,16 @@ import { useEffect, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 
-const API = "http://localhost:8100/api/v1";
+const API = "/api/v1";
+
+const DEFAULT_MISSING_EVAL_METRICS = [
+  "faithfulness",
+  "answer_relevancy",
+  "context_precision",
+  "context_recall",
+  "answer_correctness",
+  "answer_similarity",
+];
 
 function DashboardContent() {
   const searchParams = useSearchParams();
@@ -13,18 +22,54 @@ function DashboardContent() {
   const [recentTraces, setRecentTraces] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    Promise.all([
+  const [bulkJob, setBulkJob] = useState<any>(null);
+  const [bulkRunning, setBulkRunning] = useState(false);
+
+  const loadData = () => {
+    return Promise.all([
       fetch(`${API}/metrics/summary?project=${encodeURIComponent(project)}`).then((r) => r.json()),
       fetch(`${API}/traces?project=${encodeURIComponent(project)}&limit=10`).then((r) => r.json()),
-    ])
-      .then(([s, t]) => {
-        setSummary(s);
-        setRecentTraces(t.traces || []);
-      })
+    ]).then(([s, t]) => {
+      setSummary(s);
+      setRecentTraces(t.traces || []);
+    });
+  };
+
+  useEffect(() => {
+    loadData()
       .catch(() => setSummary(null))
       .finally(() => setLoading(false));
   }, [project]);
+
+  const runMissingEvals = async () => {
+    setBulkRunning(true);
+    setBulkJob({ status: "queued", progress_message: "Queueing..." });
+    try {
+      const res = await fetch(`${API}/evaluation/run-missing-async`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project, metrics: DEFAULT_MISSING_EVAL_METRICS, limit: 200 }),
+      });
+      const queued = await res.json();
+      const jobId = queued.job_id;
+
+      const poll = async () => {
+        const r = await fetch(`${API}/evaluation/jobs/${jobId}`);
+        const job = await r.json();
+        setBulkJob(job);
+        if (job.status === "completed" || job.status === "failed") {
+          setBulkRunning(false);
+          loadData(); // refresh scores on the page
+          return;
+        }
+        setTimeout(poll, 2000);
+      };
+      poll();
+    } catch (e) {
+      setBulkRunning(false);
+      setBulkJob({ status: "failed", error: "Network error" });
+    }
+  };
 
   if (loading) {
     return (
@@ -46,10 +91,47 @@ function DashboardContent() {
           <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
           <p className="text-sm text-gray-500 mt-0.5">{project}</p>
         </div>
-        <Link href={`/traces?project=${encodeURIComponent(project)}`} className="btn-primary">
-          View All Traces
-        </Link>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={runMissingEvals}
+            disabled={bulkRunning}
+            className="btn-secondary text-sm disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2"
+            title="Evaluate only traces that are missing one or more RAGAS metrics — already-scored traces and metrics are left untouched"
+          >
+            {bulkRunning && (
+              <svg className="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+            )}
+            {bulkRunning ? "Running Missing Evals..." : "Run Missing Evals"}
+          </button>
+          <Link href={`/traces?project=${encodeURIComponent(project)}`} className="btn-primary">
+            View All Traces
+          </Link>
+        </div>
       </div>
+
+      {bulkJob && (
+        <div className={`mb-4 px-4 py-2.5 rounded-lg text-xs border ${
+          bulkJob.status === "completed" ? "bg-green-50 border-green-200 text-green-700"
+          : bulkJob.status === "failed" ? "bg-red-50 border-red-200 text-red-700"
+          : "bg-indigo-50 border-indigo-200 text-indigo-700"
+        }`}>
+          {bulkJob.status === "completed" && bulkJob.result ? (
+            <span>
+              Done — checked {bulkJob.result.traces_checked} traces, {bulkJob.result.traces_with_missing_metrics} had gaps,
+              {" "}<strong>{bulkJob.result.evaluated} evaluated</strong>
+              {bulkJob.result.failed > 0 && `, ${bulkJob.result.failed} failed`}
+              {bulkJob.result.skipped_no_applicable_metrics > 0 && `, ${bulkJob.result.skipped_no_applicable_metrics} skipped (no ground truth / context)`}.
+            </span>
+          ) : bulkJob.status === "failed" ? (
+            <span>Bulk eval failed: {bulkJob.error || "unknown error"}</span>
+          ) : (
+            <span>{bulkJob.progress_message || "Working..."}</span>
+          )}
+        </div>
+      )}
 
       {!hasData ? (
         <div className="card text-center py-16">

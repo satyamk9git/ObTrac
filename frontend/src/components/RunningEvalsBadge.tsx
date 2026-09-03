@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 
-const API = "http://localhost:8100/api/v1";
+const API = "/api/v1";
 
 type Job = {
   id: string;
@@ -64,20 +64,17 @@ export default function RunningEvalsBadge() {
               <p className="text-[11px] text-gray-500">Auto-refreshes every 5 seconds</p>
             </div>
             <div className="max-h-96 overflow-y-auto">
-              {jobs.map((job) => (
-                <Link
-                  key={job.id}
-                  href={`/traces/${job.trace_id}?project=${encodeURIComponent(job.project)}`}
-                  onClick={() => setOpen(false)}
-                  className="block px-4 py-3 border-b border-gray-100 hover:bg-gray-50 transition-colors"
-                >
+              {jobs.map((job) => {
+                const isBulk = job.trace_id === "__bulk__";
+                const content = (
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-mono text-gray-700 truncate">
-                        {job.trace_id.slice(0, 12)}...
+                        {isBulk ? "Bulk eval (missing metrics)" : `${job.trace_id.slice(0, 12)}...`}
                       </p>
                       <p className="text-[11px] text-gray-500 mt-0.5">
-                        {job.project} • {job.metrics.length} metric{job.metrics.length !== 1 ? "s" : ""} × {job.judge_llm_config_ids.length} LLM{job.judge_llm_config_ids.length !== 1 ? "s" : ""}
+                        {job.project} • {job.metrics.length} metric{job.metrics.length !== 1 ? "s" : ""}
+                        {!isBulk && ` × ${job.judge_llm_config_ids.length} LLM${job.judge_llm_config_ids.length !== 1 ? "s" : ""}`}
                       </p>
                       <p className="text-[11px] text-indigo-600 mt-1 truncate">
                         {job.progress_message || job.status}
@@ -91,8 +88,25 @@ export default function RunningEvalsBadge() {
                       {job.status}
                     </span>
                   </div>
-                </Link>
-              ))}
+                );
+                if (isBulk) {
+                  return (
+                    <div key={job.id} className="block px-4 py-3 border-b border-gray-100">
+                      {content}
+                    </div>
+                  );
+                }
+                return (
+                  <Link
+                    key={job.id}
+                    href={`/traces/${job.trace_id}?project=${encodeURIComponent(job.project)}`}
+                    onClick={() => setOpen(false)}
+                    className="block px-4 py-3 border-b border-gray-100 hover:bg-gray-50 transition-colors"
+                  >
+                    {content}
+                  </Link>
+                );
+              })}
             </div>
           </div>
         </>

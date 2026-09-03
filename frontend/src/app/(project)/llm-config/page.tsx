@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-const API = "http://localhost:8100/api/v1";
+const API = "/api/v1";
 
 const PROVIDERS = [
   { value: "azure_openai", label: "Azure OpenAI" },
