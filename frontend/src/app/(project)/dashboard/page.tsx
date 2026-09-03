@@ -96,7 +96,7 @@ function DashboardContent() {
             onClick={runMissingEvals}
             disabled={bulkRunning}
             className="btn-secondary text-sm disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2"
-            title="Evaluate only traces that are missing one or more RAGAS metrics — already-scored traces and metrics are left untouched"
+            title="Evaluate only traces that are missing one or more metrics — already-scored traces and metrics are left untouched"
           >
             {bulkRunning && (
               <svg className="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24">
@@ -178,10 +178,10 @@ function DashboardContent() {
             ))}
           </div>
 
-          {/* RAGAS Metrics */}
+          {/* Evaluation Metrics */}
           {Object.keys(summary.avg_metrics || {}).length > 0 && (
             <>
-              <h2 className="text-base font-semibold text-gray-900 mb-3">Average RAGAS Metrics</h2>
+              <h2 className="text-base font-semibold text-gray-900 mb-3">Average Evaluation Metrics</h2>
               <div className="grid grid-cols-3 gap-4 mb-6">
                 {Object.entries(summary.avg_metrics).map(([name, value]) => {
                   const v = value as number;
@@ -259,7 +259,7 @@ function DashboardContent() {
                           ))}
                         </div>
                       ) : t.eval_status === "failed" || t.eval_status === "partial" ? (
-                        <span className="text-[10px] text-yellow-500" title="RAGAS returned NaN — known Azure OpenAI compatibility issue">Eval partial</span>
+                        <span className="text-[10px] text-yellow-500" title="Judge returned an invalid score for one or more metrics — known Azure OpenAI compatibility issue">Eval partial</span>
                       ) : (
                         <span className="text-[10px] text-gray-300">—</span>
                       )}

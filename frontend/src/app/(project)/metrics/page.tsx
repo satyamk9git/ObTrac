@@ -136,7 +136,7 @@ function MetricsContent() {
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">RAGAS Metrics</h1>
+          <h1 className="text-2xl font-bold text-gray-900">Evaluation Metrics</h1>
           <p className="text-sm text-gray-500">{summary?.total_traces || 0} evaluated traces in {project}</p>
         </div>
         <div className="flex gap-2">
@@ -186,7 +186,7 @@ function MetricsContent() {
             </div>
           ) : (
             <div className="card text-center py-10">
-              <p className="text-gray-500">No metric data yet. Run RAGAS evaluation on your traces.</p>
+              <p className="text-gray-500">No metric data yet. Run an evaluation on your traces.</p>
             </div>
           )}
 

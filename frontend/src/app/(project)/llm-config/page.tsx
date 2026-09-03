@@ -493,7 +493,7 @@ export default function LLMConfigPage() {
             <label htmlFor="auto_eval" className="text-sm text-gray-700">
               <span className="font-medium">Use for Auto-Evaluation</span>
               <p className="text-xs text-gray-500 mt-0.5">
-                When enabled, this LLM will be used as the judge for automatic RAGAS evaluation.
+                When enabled, this LLM will be used as the judge for automatic evaluation.
                 Only one LLM can have this enabled — enabling here will disable on others.
               </p>
             </label>

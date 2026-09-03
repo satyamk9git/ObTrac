@@ -196,7 +196,7 @@ export default function ProjectsPage() {
                     </p>
                   </div>
                   <div>
-                    <p className="text-[10px] text-gray-400 uppercase" title="Average RAGAS-style score across evaluated traces — distinct from Success (did the code run without erroring)">Quality</p>
+                    <p className="text-[10px] text-gray-400 uppercase" title="Average evaluation score across evaluated traces — distinct from Success (did the code run without erroring)">Quality</p>
                     <p className={`text-lg font-bold ${hasQuality ? getQualityColor(p.avg_quality_score) : "text-gray-300"}`}>
                       {hasQuality ? `${(p.avg_quality_score * 100).toFixed(0)}%` : "—"}
                     </p>

@@ -1,5 +1,7 @@
 """
-Evaluation API - Run RAGAS metrics on traces, with or without ground truth.
+Evaluation API - Run quality metrics on traces, with or without ground truth.
+Sources built-in, DeepEval, and Arize Phoenix metrics via the metric
+registry (app.services.metrics) — not limited to RAGAS-style scoring.
 """
 
 import threading

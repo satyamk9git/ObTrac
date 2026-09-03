@@ -478,11 +478,11 @@ function TraceDetailContent() {
       )}
 
       {/* ========================================
-          RAGAS EVALUATION SECTION
+          EVALUATION SECTION
           ======================================== */}
       <div className="bg-white rounded-lg border p-6 mb-6">
         <h2 className="text-lg font-semibold text-gray-800 mb-4">
-          Run RAGAS Evaluation
+          Run Evaluation
         </h2>
 
         {/* Step 1: Select LLMs */}
