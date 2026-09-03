@@ -168,7 +168,7 @@ export default function LLMConfigPage() {
         <h1 className="text-2xl font-bold text-gray-900">LLM Configuration</h1>
         <button
           onClick={() => showForm ? handleCancelForm() : setShowForm(true)}
-          className="bg-primary-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-primary-700"
+          className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-indigo-700"
         >
           {showForm ? "Cancel" : "+ Add LLM"}
         </button>
@@ -501,7 +501,7 @@ export default function LLMConfigPage() {
 
           <button
             type="submit"
-            className="bg-primary-600 text-white px-6 py-2 rounded-lg text-sm hover:bg-primary-700"
+            className="bg-indigo-600 text-white px-6 py-2 rounded-lg text-sm hover:bg-indigo-700"
           >
             {editingId ? "Update LLM Configuration" : "Save LLM Configuration"}
           </button>
