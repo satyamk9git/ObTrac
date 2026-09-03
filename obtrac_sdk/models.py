@@ -67,6 +67,18 @@ class Span:
     tokens: dict[str, int] = field(default_factory=dict)
     cost_usd: float = 0.0
     model: str | None = None
+    # Tool-call fields. `tool_calls` is for a GENERATION span that
+    # *requested* one or more calls (from the LLM response's own
+    # tool_calls, auto-captured by llm_gateway.call()); `tool_name`/
+    # `tool_call_id`/`tool_args`/`tool_result` are for a TOOL_CALL span
+    # that *executed* one — a single LLM turn can request several tool
+    # calls before any of them actually run, so these are deliberately
+    # separate rather than reusing one field for both.
+    tool_calls: list[dict] | None = None
+    tool_name: str | None = None
+    tool_call_id: str | None = None
+    tool_args: dict[str, Any] | None = None
+    tool_result: Any | None = None
 
     def finish(self, outputs: dict = None, error: str = None):
         self.end_time = datetime.utcnow()
@@ -97,6 +109,11 @@ class Span:
             "tokens": self.tokens,
             "cost_usd": self.cost_usd,
             "model": self.model,
+            "tool_calls": self.tool_calls,
+            "tool_name": self.tool_name,
+            "tool_call_id": self.tool_call_id,
+            "tool_args": self.tool_args,
+            "tool_result": self.tool_result,
         }
 
 

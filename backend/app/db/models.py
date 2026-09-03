@@ -85,6 +85,16 @@ class SpanRecord(Base):
     tokens = Column(JSON, default=dict)
     cost_usd = Column(Float, default=0.0)
     model = Column(String, nullable=True)
+    # Tool-call fields — see obtrac_sdk/models.py Span for the field split
+    # between a GENERATION span that *requested* calls (tool_calls) and a
+    # TOOL_CALL span that *executed* one (tool_name/tool_call_id/tool_args/
+    # tool_result). All additive/nullable — auto-migrated on next backend
+    # startup (backend/app/db/database.py), no manual migration needed.
+    tool_calls = Column(JSON, nullable=True)
+    tool_name = Column(String, nullable=True)
+    tool_call_id = Column(String, nullable=True)
+    tool_args = Column(JSON, nullable=True)
+    tool_result = Column(JSON, nullable=True)
 
     trace = relationship("TraceRecord", back_populates="spans")
 

@@ -53,6 +53,23 @@ def _build_contexts(trace) -> list[str]:
     return []
 
 
+def _build_tool_calls(trace) -> list[dict]:
+    """Walks trace.spans for TOOL_CALL spans and normalizes them into the
+    shape MetricInput.tool_calls / the tool-dependent metric adapters
+    expect: {"name", "args", "result", "status"}."""
+    calls = []
+    for span in trace.spans or []:
+        if span.span_type != "tool_call" or not span.tool_name:
+            continue
+        calls.append({
+            "name": span.tool_name,
+            "args": span.tool_args or {},
+            "result": span.tool_result,
+            "status": span.status,
+        })
+    return calls
+
+
 @router.get("/metrics-info")
 def get_metrics_info():
     """Get detailed information about all available metrics — built-in
@@ -91,6 +108,7 @@ def run_evaluation(req: EvalRequest, db: Session = Depends(get_db)):
 
     # Determine ground truth
     ground_truth = req.ground_truth or trace.ground_truth
+    gt_record = None
 
     # Try to match from resources if not provided
     if not ground_truth and trace.query:
@@ -109,6 +127,8 @@ def run_evaluation(req: EvalRequest, db: Session = Depends(get_db)):
         question=trace.query or "", answer=trace.answer or "",
         contexts=contexts, ground_truth=ground_truth or "",
         retrieved_chunks=trace.retrieved_chunks or [],
+        tool_calls=_build_tool_calls(trace),
+        expected_tools=(gt_record.expected_tools if gt_record else None) or [],
     )
     runnable_metrics = []
     skipped_metrics = []
@@ -444,6 +464,7 @@ def _execute_multi_llm_eval(
     # 2. Semantic match in specified dataset (using embeddings)
     # 3. Existing trace.ground_truth
     ground_truth = req.ground_truth
+    matched_expected_tools = None
     if not ground_truth and req.dataset_name and trace.query:
         try:
             from app.api.resources import match_ground_truth_semantic
@@ -455,6 +476,7 @@ def _execute_multi_llm_eval(
             )
             if match_result.get("found") and match_result.get("match"):
                 ground_truth = match_result["match"]["ground_truth"]
+                matched_expected_tools = match_result["match"].get("expected_tools")
                 logger.info(f"Semantic GT match: '{trace.query[:40]}' -> '{match_result['match']['question'][:40]}' (score: {match_result.get('score')})")
         except Exception as e:
             logger.warning(f"Semantic match failed: {e}")
@@ -485,6 +507,8 @@ def _execute_multi_llm_eval(
         question=trace.query or "", answer=trace.answer or "",
         contexts=contexts, ground_truth=ground_truth or "",
         retrieved_chunks=trace.retrieved_chunks or [],
+        tool_calls=_build_tool_calls(trace),
+        expected_tools=matched_expected_tools or [],
     )
     runnable_metrics = []
     skipped_metrics = []
@@ -517,7 +541,7 @@ def _execute_multi_llm_eval(
     _set_progress(f"Evaluating with {len(llm_configs)} judge(s) in parallel: {names}...")
     with ThreadPoolExecutor(max_workers=min(len(llm_configs), 4)) as pool:
         llm_results = list(pool.map(
-            lambda cfg: _run_single_llm_eval(trace, cfg, runnable_metrics, contexts, ground_truth),
+            lambda cfg: _run_single_llm_eval(trace, cfg, runnable_metrics, contexts, ground_truth, matched_expected_tools),
             llm_configs,
         ))
 
@@ -729,7 +753,7 @@ def cancel_eval_job(job_id: str, db: Session = Depends(get_db)):
     return {"status": "cancelled"}
 
 
-def _run_single_llm_eval(trace, llm_cfg, metrics, contexts, ground_truth) -> dict:
+def _run_single_llm_eval(trace, llm_cfg, metrics, contexts, ground_truth, expected_tools=None) -> dict:
     """Run evaluation with a single LLM judge via the metric registry
     (app.services.metrics) — built-in metrics score via app.services.llm_judge
     under the hood; RAGAS itself is not used here (its own package has a
@@ -741,6 +765,8 @@ def _run_single_llm_eval(trace, llm_cfg, metrics, contexts, ground_truth) -> dic
             question=trace.query or "", answer=trace.answer or "",
             contexts=contexts, ground_truth=ground_truth or "",
             retrieved_chunks=trace.retrieved_chunks or [],
+            tool_calls=_build_tool_calls(trace),
+            expected_tools=expected_tools or [],
         )
         metric_results = MetricRunner.run(metrics, eval_input, llm_cfg)
         result_dict = {r.metric: r.score for r in metric_results if r.score is not None}

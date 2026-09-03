@@ -32,6 +32,13 @@ class MetricInput:
     ground_truth: str = ""
     retrieved_chunks: list[dict] = field(default_factory=list)
     trace_metadata: dict[str, Any] = field(default_factory=dict)
+    # Tool-call data, walked from trace.spans where span_type == "tool_call":
+    # [{"name": str, "args": dict, "result": Any, "status": str}, ...].
+    # expected_tools comes from a matched GroundTruthRecord.expected_tools,
+    # same shape, no "result"/"status" (those describe what happened, not
+    # what should happen).
+    tool_calls: list[dict] = field(default_factory=list)
+    expected_tools: list[dict] = field(default_factory=list)
 
     @property
     def context(self) -> str:
@@ -46,6 +53,14 @@ class MetricInput:
     @property
     def has_ground_truth(self) -> bool:
         return bool(self.ground_truth)
+
+    @property
+    def has_tool_calls(self) -> bool:
+        return bool(self.tool_calls)
+
+    @property
+    def has_expected_tools(self) -> bool:
+        return bool(self.expected_tools)
 
 
 @dataclass
@@ -79,6 +94,8 @@ class MetricDefinition(ABC):
     source: str = "custom"  # "ragas" | "deepeval" | "mlflow" | "arize" | "custom"
     needs_ground_truth: bool = False
     needs_context: bool = False
+    needs_tool_calls: bool = False
+    needs_expected_tools: bool = False
     threshold: float = 0.7
     description: str = ""
     what_it_measures: str = ""
@@ -92,6 +109,10 @@ class MetricDefinition(ABC):
             return False, "Requires ground truth. Upload via Resources or provide directly."
         if self.needs_context and not inp.has_context:
             return False, "No retrieved context available in this trace."
+        if self.needs_tool_calls and not inp.has_tool_calls:
+            return False, "No tool calls captured in this trace. Instrument tool functions with @trace(tool_name=...) to enable this metric."
+        if self.needs_expected_tools and not inp.has_expected_tools:
+            return False, "Requires an expected-tools reference. Add expected_tools to this question's ground-truth dataset entry."
         return True, None
 
     @abstractmethod
@@ -109,6 +130,8 @@ class MetricDefinition(ABC):
             "description": self.description,
             "needs_ground_truth": self.needs_ground_truth,
             "needs_context": self.needs_context,
+            "needs_tool_calls": self.needs_tool_calls,
+            "needs_expected_tools": self.needs_expected_tools,
             "threshold": self.threshold,
             "category": self.category,
             "source": self.source,

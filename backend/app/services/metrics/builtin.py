@@ -38,6 +38,8 @@ class LLMJudgeMetric(MetricDefinition):
         self.description = info.get("description", "")
         self.needs_ground_truth = info.get("needs_ground_truth", False)
         self.needs_context = info.get("needs_context", False)
+        self.needs_tool_calls = info.get("needs_tool_calls", type(self).needs_tool_calls)
+        self.needs_expected_tools = info.get("needs_expected_tools", type(self).needs_expected_tools)
         self.threshold = info.get("threshold", 0.7)
         self.category = info.get("category", "Uncategorized")
         self.what_it_measures = info.get("what_it_measures", "")
@@ -54,6 +56,46 @@ class LLMJudgeMetric(MetricDefinition):
         _, score, reason = _score_one_metric(
             llm, self.key, self.prompt_template,
             inp.question, inp.answer, inp.context, inp.ground_truth,
+        )
+        if score is None:
+            return MetricResult(metric=self.key, error="Judge LLM did not return a valid score")
+        return MetricResult(metric=self.key, score=score, reason=reason or "")
+
+
+def _format_tool_calls(calls: list) -> str:
+    if not calls:
+        return "(none)"
+    lines = []
+    for c in calls:
+        if isinstance(c, dict):
+            name = c.get("name", "?")
+            args = c.get("args", c.get("arguments", {}))
+            lines.append(f"- {name}({args})")
+        else:
+            lines.append(f"- {c}")  # bare tool name string, e.g. a hand-entered expected_tools list
+    return "\n".join(lines)
+
+
+class ToolCallJudgeMetric(LLMJudgeMetric):
+    """Same prompt-template/JSON-parsing mechanism as LLMJudgeMetric, but
+    the prompt also needs {actual_tool_calls}/{expected_tool_calls} text —
+    formatted from inp.tool_calls/expected_tools rather than the standard
+    question/answer/context/ground_truth placeholders alone."""
+
+    needs_tool_calls = True
+
+    def score(self, inp: MetricInput, judge_llm: "LLMConfigRecord | None") -> MetricResult:
+        if judge_llm is None:
+            return MetricResult(metric=self.key, error="No judge LLM configured")
+
+        from app.services.llm_judge import _build_llm, _score_one_metric
+
+        llm = _build_llm(judge_llm)
+        _, score, reason = _score_one_metric(
+            llm, self.key, self.prompt_template,
+            inp.question, inp.answer, inp.context, inp.ground_truth,
+            actual_tool_calls=_format_tool_calls(inp.tool_calls),
+            expected_tool_calls=_format_tool_calls(inp.expected_tools),
         )
         if score is None:
             return MetricResult(metric=self.key, error="Judge LLM did not return a valid score")
@@ -281,16 +323,80 @@ _METRIC_METADATA = {
             "Consider a moderation/guardrail layer in front of generation for high-risk deployments",
         ],
     },
+    "tool_call_accuracy": {
+        "name": "Tool Call Accuracy",
+        "description": "Sequence-aware comparison of the tools actually called against the expected tool calls — right tools, right order, right arguments.",
+        "needs_ground_truth": False,
+        "needs_context": False,
+        "needs_tool_calls": True,
+        "needs_expected_tools": True,
+        "threshold": 0.7,
+        "category": "Tool Use",
+        "what_it_measures": "Combines tool-selection correctness, call ordering, and argument accuracy into one score, mirroring RAGAS's argument-accuracy x sequence-alignment methodology.",
+        "score_interpretation": {
+            "good": ">=0.8 — Tools, order, and arguments all closely match expected",
+            "warning": "0.5-0.8 — Right tools but argument or ordering issues",
+            "bad": "<0.5 — Wrong tools called, or no tool calls when clearly expected",
+        },
+        "improvement_tips": [
+            "Check whether the model is choosing the wrong tool for the task — may need clearer tool descriptions",
+            "Check argument formatting — a common failure is passing the right value in the wrong parameter or format",
+            "Add expected_tools to your ground-truth dataset entries for this query to enable this metric",
+        ],
+    },
+    "tool_call_f1": {
+        "name": "Tool Call F1",
+        "description": "Unordered precision/recall/F1 over actual vs. expected tool calls — order doesn't matter here, only whether the right set of tools was called (see Tool Call Accuracy for the order-sensitive version).",
+        "needs_ground_truth": False,
+        "needs_context": False,
+        "needs_tool_calls": True,
+        "needs_expected_tools": True,
+        "threshold": 0.7,
+        "category": "Tool Use",
+        "what_it_measures": "F1 balance between calling all necessary tools (recall) and not calling unnecessary ones (precision).",
+        "score_interpretation": {
+            "good": ">=0.8 — Nearly all expected tools called, few/no extras",
+            "warning": "0.5-0.8 — Some expected tools missing, or notable extra calls",
+            "bad": "<0.5 — Most expected tools missing, or mostly wrong tools called",
+        },
+        "improvement_tips": [
+            "Low recall (missing expected calls)? The model may not recognize when a tool is needed — check tool descriptions/examples",
+            "Low precision (extra calls)? The model may be over-calling tools defensively — tighten the system prompt",
+        ],
+    },
+    "agent_goal_accuracy": {
+        "name": "Agent Goal Accuracy",
+        "description": "Binary verdict on whether the trace's tool-call trajectory and final answer actually achieved what the user asked for — works with or without tool calls present.",
+        "needs_ground_truth": False,
+        "needs_context": False,
+        "needs_tool_calls": False,
+        "threshold": 1.0,
+        "category": "Tool Use",
+        "what_it_measures": "End-to-end task success, considering the full path taken (tool calls, if any) not just the final text.",
+        "score_interpretation": {
+            "good": "1.0 — Goal achieved",
+            "warning": "N/A — this is a binary metric",
+            "bad": "0.0 — Goal not achieved, regardless of how plausible the final answer sounds",
+        },
+        "improvement_tips": [
+            "A 0.0 here despite a fluent-sounding answer usually means the answer doesn't actually address what was asked — check for scope drift",
+            "If tool calls were involved, verify the trajectory itself (not just the final answer) reached the right end state",
+        ],
+    },
 }
 
 
 def build_metrics() -> list[LLMJudgeMetric]:
-    """Construct the 6 built-in metric instances. Imports JUDGE_PROMPTS
+    """Construct the built-in metric instances. Imports JUDGE_PROMPTS
     lazily to avoid a hard import-time dependency between the metrics
     package and llm_judge.py (which itself imports litellm)."""
     from app.services.llm_judge import JUDGE_PROMPTS
 
+    tool_call_keys = {"tool_call_accuracy", "tool_call_f1", "agent_goal_accuracy"}
+
     return [
-        LLMJudgeMetric(key=key, prompt_template=JUDGE_PROMPTS[key], **meta)
+        (ToolCallJudgeMetric if key in tool_call_keys else LLMJudgeMetric)(
+            key=key, prompt_template=JUDGE_PROMPTS[key], **meta
+        )
         for key, meta in _METRIC_METADATA.items()
     ]

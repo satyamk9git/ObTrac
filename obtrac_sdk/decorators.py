@@ -47,6 +47,22 @@ def _count_tokens(text: str, model: str = "gpt-4o") -> int:
         return len(str(text)) // 4
 
 
+def _auto_capture_tool_calls(span: Span, result) -> None:
+    """If a raw LiteLLM response was returned directly from a @trace'd
+    function (the same case _auto_capture_usage handles for tokens),
+    also auto-populate span.tool_calls — reuses llm_gateway's own
+    extraction so the parsing logic isn't duplicated."""
+    if not hasattr(result, "choices"):
+        return
+    try:
+        from obtrac_sdk.llm_gateway import _extract_tool_calls
+        tool_calls = _extract_tool_calls(result)
+        if tool_calls:
+            span.tool_calls = tool_calls
+    except Exception:
+        pass  # best-effort — never let auto-capture break the actual call
+
+
 def _auto_capture_usage(span: Span, inputs: dict, result, model_name: str = None):
     """
     Auto-capture token usage from:
@@ -60,6 +76,7 @@ def _auto_capture_usage(span: Span, inputs: dict, result, model_name: str = None
             "completion": getattr(usage, "completion_tokens", 0) or 0,
         }
         span.model = getattr(result, "model", model_name) or model_name
+        _auto_capture_tool_calls(span, result)
         litellm_cost = getattr(result, "_hidden_params", {}).get("response_cost", 0)
         if litellm_cost and litellm_cost > 0:
             span.cost_usd = litellm_cost
@@ -268,6 +285,18 @@ def _apply_field_map(trace_obj: Trace, field_map: dict, all_args: dict, result):
             trace_obj.ground_truth = str(gt_val)
 
 
+def _apply_tool_fields(span: Span, tool_name: str, tool_result_field: str, all_args: dict, result):
+    """Populate span.tool_name/tool_args/tool_result for a @trace(tool_name=...)
+    call — tool_args reuses span.inputs (already captured) rather than
+    needing its own separate mapping."""
+    if not tool_name:
+        return
+    span.tool_name = tool_name
+    span.tool_args = dict(span.inputs) if span.inputs else None
+    if tool_result_field:
+        span.tool_result = _resolve_field(tool_result_field, all_args, result)
+
+
 # ---------------------------------------------------------------------------
 # Public decorator
 # ---------------------------------------------------------------------------
@@ -284,6 +313,8 @@ def trace(
     response: str = None,
     ground_truth: str = None,
     metrics: list = None,
+    tool_name: str = None,
+    tool_result: str = None,
 ):
     """
     Unified decorator for RAG pipeline instrumentation.
@@ -317,6 +348,13 @@ def trace(
         metrics (list[str]): RAGAS metrics to run when auto_eval=True in config.
             E.g. ["faithfulness", "answer_relevancy", "context_precision"].
             Only applies in root mode. Overrides config.default_metrics.
+        tool_name (str): Marks this span as a tool call with this tool's
+            name — span.tool_args is auto-populated from the function's
+            captured inputs, no separate mapping needed. Typically paired
+            with span_type="tool_call". E.g. tool_name="web_search".
+        tool_result (str): Argument name (or "return") for the tool's
+            result, stored on span.tool_result. Default: "return".
+            Only applies when tool_name is also set.
 
     Examples:
         Full RAG pipeline with eval::
@@ -347,6 +385,8 @@ def trace(
             "input_token_1k": cost.get("input_token_cost", cost.get("input_token_1k", 0)),
             "output_token_1k": cost.get("output_token_cost", cost.get("output_token_1k", 0)),
         }
+
+    _tool_result_field = (tool_result or "return") if tool_name else None
 
     _field_map = {}
     if query:
@@ -399,6 +439,7 @@ def trace(
                 _auto_capture_usage(span, span.inputs, result, model)
 
                 all_args = dict(span.inputs)
+                _apply_tool_fields(span, tool_name, _tool_result_field, all_args, result)
                 if _field_map and current_trace:
                     _apply_field_map(current_trace, _field_map, all_args, result)
                 elif is_root and current_trace:
@@ -462,6 +503,7 @@ def trace(
                 _auto_capture_usage(span, span.inputs, result, model)
 
                 all_args = dict(span.inputs)
+                _apply_tool_fields(span, tool_name, _tool_result_field, all_args, result)
                 if _field_map and current_trace:
                     _apply_field_map(current_trace, _field_map, all_args, result)
                 elif is_root and current_trace:

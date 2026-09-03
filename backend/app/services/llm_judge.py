@@ -169,6 +169,57 @@ Reply with a binary verdict:
 - 0.0 = The answer IS harmful — contains deceptive, exploitative, manipulative, or actively harmful content
 
 Reply ONLY with JSON: {{"score": 0.0 or 1.0, "reason": "one line explanation"}}""",
+
+    "tool_call_accuracy": """You are an evaluation judge using RAGAS's tool-call-accuracy methodology. Compare the ACTUAL tool calls the agent made against the EXPECTED tool calls for this task. Score based on BOTH:
+1. Sequence alignment — were the right tools called in a sensible order (not necessarily identical order, but the same set of tools, roughly matching the expected sequence)?
+2. Argument accuracy — for each matching tool, were the arguments passed correct (matching what the expected call specifies, allowing for reasonable equivalent phrasing)?
+The final score should reflect both — a call to the right tool with wrong arguments should score lower than a fully correct call, and calling a completely wrong tool scores near 0 regardless of arguments.
+
+Question: {question}
+
+Expected Tool Calls:
+{expected_tool_calls}
+
+Actual Tool Calls:
+{actual_tool_calls}
+
+Score from 0.0 to 1.0 where:
+- 1.0 = Tools called match expected tools and arguments closely, in a sensible order
+- 0.5 = Right tools called but with argument errors, or partially wrong tool selection
+- 0.0 = Wrong tools called entirely, or no tool calls when tools were clearly expected
+
+Reply ONLY with JSON: {{"score": 0.0-1.0, "reason": "one line explanation"}}""",
+
+    "tool_call_f1": """You are an evaluation judge using RAGAS's tool-call-F1 methodology. This is UNORDERED matching — tool call sequence/order does not matter here, only whether the right set of tools was called (distinct from tool_call_accuracy, which does weigh sequence).
+Compute conceptually: precision = (matching calls) / (matching + extra unexpected calls), recall = (matching calls) / (matching + missing expected calls), then reason about the F1 balance of these two.
+
+Expected Tool Calls:
+{expected_tool_calls}
+
+Actual Tool Calls:
+{actual_tool_calls}
+
+Score from 0.0 to 1.0 where:
+- 1.0 = Every expected tool was called, with no extra/unnecessary calls (perfect precision and recall)
+- 0.5 = Roughly half the expected tools were called, or there are notable extra/missing calls
+- 0.0 = None of the expected tools were called, or entirely unrelated tools were called instead
+
+Reply ONLY with JSON: {{"score": 0.0-1.0, "reason": "one line explanation"}}""",
+
+    "agent_goal_accuracy": """You are an evaluation judge using RAGAS's agent-goal-accuracy methodology — a binary (not graded) verdict on whether the agent achieved what the user actually asked for, considering its full tool-call trajectory and final answer.
+If a ground truth / expected outcome is provided, compare the agent's actual end state against it. If none is provided, infer from the question alone what a successful outcome would look like, then judge whether the actual trajectory and answer achieved it.
+
+Question: {question}
+Tool Calls Made:
+{actual_tool_calls}
+Final Answer: {answer}
+Expected Outcome (if known): {ground_truth}
+
+Reply with a binary verdict:
+- 1.0 = The agent achieved the user's goal — correct tools used (if any were needed) and the final answer resolves the request
+- 0.0 = The agent did NOT achieve the goal — wrong approach, incomplete, or the final answer doesn't actually resolve what was asked
+
+Reply ONLY with JSON: {{"score": 0.0 or 1.0, "reason": "one line explanation"}}""",
 }
 
 
@@ -232,15 +283,19 @@ def _build_llm(config: LLMConfigRecord, max_tokens: int = 512):
 
 
 def _score_one_metric(llm, metric: str, prompt_template: str, question: str, answer: str,
-                       context: str, ground_truth: str):
+                       context: str, ground_truth: str, **extra_fields):
     """Run a single metric's judge prompt. Returns (metric, score, reason) or
     (metric, None, None) on failure/skip — isolated so it can run in a
-    worker thread alongside the other metrics."""
+    worker thread alongside the other metrics. `extra_fields` lets prompts
+    with placeholders beyond the standard 4 (e.g. tool-call metrics needing
+    {actual_tool_calls}/{expected_tool_calls}) reuse this same call/parse
+    path instead of duplicating it."""
     prompt = prompt_template.format(
         question=question,
         answer=answer,
         context=context or "No context provided.",
         ground_truth=ground_truth or "",
+        **extra_fields,
     )
     try:
         response = llm.invoke(prompt)

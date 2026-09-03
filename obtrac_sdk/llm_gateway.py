@@ -4,6 +4,7 @@ Supports: OpenAI, Azure OpenAI, Anthropic (Claude), Google Gemini,
 Vertex AI, AWS Bedrock, Ollama, Groq, Together AI, HuggingFace, vLLM.
 """
 
+import json
 import logging
 from typing import Any
 
@@ -17,6 +18,32 @@ logger = logging.getLogger("obtrac")
 
 # Disable LiteLLM's verbose logging
 litellm.set_verbose = False
+
+
+def _extract_tool_calls(response) -> list[dict] | None:
+    """Normalize response.choices[0].message.tool_calls (litellm's shape is
+    consistent across providers) into plain dicts. Returns None if the
+    model didn't request any tool calls, so callers can omit the key
+    entirely rather than sending an empty list on every trace."""
+    message = response.choices[0].message
+    raw_calls = getattr(message, "tool_calls", None)
+    if not raw_calls:
+        return None
+
+    calls = []
+    for call in raw_calls:
+        arguments = call.function.arguments
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except (json.JSONDecodeError, TypeError):
+                pass  # leave as the raw string if it isn't valid JSON
+        calls.append({
+            "id": getattr(call, "id", None),
+            "name": call.function.name,
+            "arguments": arguments,
+        })
+    return calls
 
 # Provider prefix mapping for LiteLLM model strings
 PROVIDER_PREFIX = {
@@ -76,7 +103,9 @@ class LLMGateway:
         Call an LLM by its registered name.
 
         Returns:
-            dict with keys: content, tokens, cost, model, provider
+            dict with keys: content, tokens, cost, model, provider, and
+            tool_calls (list[{"id","name","arguments"}], only present if
+            the model actually requested tool calls)
         """
         if llm_name not in self._configs:
             raise ValueError(
@@ -106,6 +135,10 @@ class LLMGateway:
             "model": cfg.model_id,
             "provider": cfg.provider.value,
         }
+
+        tool_calls = _extract_tool_calls(response)
+        if tool_calls:
+            result["tool_calls"] = tool_calls
 
         return result
 

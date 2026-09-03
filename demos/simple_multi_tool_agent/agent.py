@@ -114,9 +114,12 @@ def llm_call(prompt_text: str, session_id: str = "") -> str:
 # Tool dispatcher (child span)
 # ---------------------------------------------------------------------------
 
-@trace(name="tool_dispatch", span_type="tool_call")
+@trace(name="tool_dispatch", span_type="custom")
 def run_tool(tool_name: str, tool_input: str, session_id: str = "") -> str:
-    """Route to the right tool function."""
+    """Route to the right tool function. This span itself is just a router
+    (no tool_name set) — the actual tool_call spans with tool_name/
+    tool_args/tool_result come from the individual tool functions below,
+    each decorated with @trace(tool_name=...) in tools.py."""
     if tool_name == "calculator":
         return calculator(tool_input, session_id=session_id)
     if tool_name == "get_datetime":

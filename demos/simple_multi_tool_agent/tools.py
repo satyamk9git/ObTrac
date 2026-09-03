@@ -54,7 +54,7 @@ def _safe_eval(node):
     raise ValueError(f"Unsupported expression: {ast.dump(node)}")
 
 
-@trace(name="calculator", span_type="tool_call")
+@trace(name="calculator", span_type="tool_call", tool_name="calculator")
 def calculator(expression: str, session_id: str = "") -> str:
     """Safely evaluate a math expression. session_id auto-links to conversation."""
     try:
@@ -72,7 +72,7 @@ def calculator(expression: str, session_id: str = "") -> str:
 # Date / time
 # ---------------------------------------------------------------------------
 
-@trace(name="get_datetime", span_type="tool_call")
+@trace(name="get_datetime", span_type="tool_call", tool_name="get_datetime")
 def get_datetime(session_id: str = "") -> str:
     """Return current date and time."""
     now = datetime.now()
@@ -119,7 +119,7 @@ _SEARCH_FACTS = {
     ],
 }
 
-@trace(name="web_search", span_type="tool_call")
+@trace(name="web_search", span_type="tool_call", tool_name="web_search")
 def web_search(query: str, session_id: str = "") -> str:
     """Simulate a web search and return results (mock — no real API call)."""
     q = query.lower()
@@ -182,7 +182,7 @@ _CONVERSIONS = {
     "inr_to_usd": lambda x: x / 83.5,
 }
 
-@trace(name="unit_converter", span_type="tool_call")
+@trace(name="unit_converter", span_type="tool_call", tool_name="unit_converter")
 def unit_converter(value: float, from_unit: str, to_unit: str, session_id: str = "") -> str:
     """Convert between common units. session_id links to conversation."""
     key = f"{from_unit.lower()}_to_{to_unit.lower()}"

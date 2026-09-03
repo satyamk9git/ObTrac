@@ -5,7 +5,7 @@ Traces API - CRUD operations for traces and spans.
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 import uuid
 
 from app.db.database import get_db
@@ -33,6 +33,11 @@ class SpanCreate(BaseModel):
     tokens: dict = {}
     cost_usd: float = 0.0
     model: Optional[str] = None
+    tool_calls: Optional[list] = None
+    tool_name: Optional[str] = None
+    tool_call_id: Optional[str] = None
+    tool_args: Optional[dict] = None
+    tool_result: Optional[Any] = None
 
 
 class TraceCreate(BaseModel):
@@ -134,6 +139,11 @@ def create_trace(trace_data: TraceCreate, db: Session = Depends(get_db)):
             tokens=span_data.tokens,
             cost_usd=span_data.cost_usd,
             model=span_data.model,
+            tool_calls=span_data.tool_calls,
+            tool_name=span_data.tool_name,
+            tool_call_id=span_data.tool_call_id,
+            tool_args=span_data.tool_args,
+            tool_result=span_data.tool_result,
         )
         db.add(span_record)
 
@@ -490,6 +500,11 @@ def get_trace(trace_id: str, db: Session = Depends(get_db)):
                 "tokens": s.tokens or {},
                 "cost_usd": s.cost_usd,
                 "model": s.model,
+                "tool_calls": s.tool_calls,
+                "tool_name": s.tool_name,
+                "tool_call_id": s.tool_call_id,
+                "tool_args": s.tool_args,
+                "tool_result": s.tool_result,
             }
             for s in trace.spans
         ],

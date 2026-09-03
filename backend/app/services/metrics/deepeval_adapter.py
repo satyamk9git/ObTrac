@@ -60,6 +60,25 @@ class _ObTracDeepEvalModel(DeepEvalBaseLLM):
         return f"{self._llm_config.provider}/{self._llm_config.model_id}"
 
 
+def _to_deepeval_tool_calls(calls: list) -> list:
+    """Normalize ObTrac's tool-call dicts ({"name","args","result","status"})
+    — or a bare tool-name string, for a hand-entered expected_tools list —
+    into deepeval.test_case.ToolCall objects."""
+    from deepeval.test_case import ToolCall
+
+    result = []
+    for c in calls or []:
+        if isinstance(c, dict):
+            result.append(ToolCall(
+                name=c.get("name", ""),
+                input_parameters=c.get("args", c.get("arguments")) or None,
+                output=c.get("result"),
+            ))
+        else:
+            result.append(ToolCall(name=str(c)))
+    return result
+
+
 def _test_case_from_input(inp: MetricInput) -> LLMTestCase:
     return LLMTestCase(
         input=inp.question,
@@ -67,6 +86,8 @@ def _test_case_from_input(inp: MetricInput) -> LLMTestCase:
         expected_output=inp.ground_truth or None,
         context=inp.contexts or None,
         retrieval_context=inp.contexts or None,
+        tools_called=_to_deepeval_tool_calls(inp.tool_calls) if inp.tool_calls else None,
+        expected_tools=_to_deepeval_tool_calls(inp.expected_tools) if inp.expected_tools else None,
     )
 
 
@@ -76,6 +97,7 @@ class DeepEvalMetricAdapter(MetricDefinition):
 
     def __init__(self, key: str, display_name: str, description: str, metric_cls,
                  needs_ground_truth: bool = False, needs_context: bool = False,
+                 needs_tool_calls: bool = False, needs_expected_tools: bool = False,
                  threshold: float = 0.5, metric_kwargs: dict | None = None):
         self.key = key
         self.display_name = display_name
@@ -84,6 +106,8 @@ class DeepEvalMetricAdapter(MetricDefinition):
         self._metric_kwargs = metric_kwargs or {}
         self.needs_ground_truth = needs_ground_truth
         self.needs_context = needs_context
+        self.needs_tool_calls = needs_tool_calls
+        self.needs_expected_tools = needs_expected_tools
         self.threshold = threshold
         self.what_it_measures = description
         self.improvement_tips = [
@@ -172,6 +196,8 @@ def build_metrics() -> list[MetricDefinition]:
         MisuseMetric,
         NonAdviceMetric,
         PIILeakageMetric,
+        ToolCorrectnessMetric,
+        ArgumentCorrectnessMetric,
         ToxicityMetric,
     )
 
@@ -241,6 +267,16 @@ def build_metrics() -> list[MetricDefinition]:
             ),
             metric_cls=NonAdviceMetric, threshold=0.5,
             metric_kwargs={"advice_types": ["medical", "legal", "financial"]},
+        ),
+        DeepEvalMetricAdapter(
+            key="deepeval_tool_correctness", display_name="Tool Correctness (DeepEval)",
+            description="Whether the tools actually called match the expected tools for this task, by name.",
+            metric_cls=ToolCorrectnessMetric, needs_tool_calls=True, needs_expected_tools=True, threshold=0.7,
+        ),
+        DeepEvalMetricAdapter(
+            key="deepeval_argument_correctness", display_name="Argument Correctness (DeepEval)",
+            description="Whether the arguments passed to the tools that were called are sensible given the question — doesn't require an expected-tools reference, unlike Tool Correctness.",
+            metric_cls=ArgumentCorrectnessMetric, needs_tool_calls=True, threshold=0.7,
         ),
         GEvalMetricAdapter(
             key="geval_conciseness", display_name="Conciseness (G-Eval)",
