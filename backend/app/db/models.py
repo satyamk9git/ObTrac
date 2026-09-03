@@ -17,6 +17,7 @@ from sqlalchemy.orm import relationship
 from datetime import datetime
 
 from app.db.database import Base
+from app.core.crypto import EncryptedString
 
 
 class ProjectRecord(Base):
@@ -97,8 +98,8 @@ class LLMConfigRecord(Base):
     model_id = Column(String, default="")
     role = Column(String, default="generator")
 
-    # Auth (stored encrypted in production)
-    api_key = Column(String, nullable=True)
+    # Auth — encrypted at rest (see app/core/crypto.py)
+    api_key = Column(EncryptedString, nullable=True)
     api_base = Column(String, nullable=True)
     api_version = Column(String, nullable=True)
 
@@ -106,10 +107,10 @@ class LLMConfigRecord(Base):
     azure_deployment = Column(String, nullable=True)
     vertex_project = Column(String, nullable=True)
     vertex_location = Column(String, nullable=True)
-    vertex_credentials = Column(Text, nullable=True)
+    vertex_credentials = Column(EncryptedString, nullable=True)
     aws_region = Column(String, nullable=True)
-    aws_access_key = Column(String, nullable=True)
-    aws_secret_key = Column(String, nullable=True)
+    aws_access_key = Column(EncryptedString, nullable=True)
+    aws_secret_key = Column(EncryptedString, nullable=True)
 
     # Params
     temperature = Column(Float, default=0.3)
@@ -168,7 +169,7 @@ class EmbedderConfigRecord(Base):
     model_id = Column(String, default="all-MiniLM-L6-v2")
     dimensions = Column(Integer, nullable=True)  # informational, e.g. 384 for MiniLM, 1536 for ada-002
 
-    api_key = Column(String, nullable=True)
+    api_key = Column(EncryptedString, nullable=True)  # encrypted at rest (see app/core/crypto.py)
     api_base = Column(String, nullable=True)
     api_version = Column(String, nullable=True)
     azure_deployment = Column(String, nullable=True)

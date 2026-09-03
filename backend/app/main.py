@@ -4,6 +4,8 @@ ObTrac Backend - FastAPI Application
 
 import math
 import json
+import os
+import secrets
 import traceback
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -70,10 +72,73 @@ app.add_middleware(
 )
 
 
+# --- API key auth (off by default) ---------------------------------------
+# ObTrac ships with no auth by default, matching its self-hosted /
+# localhost-first design — but that means anyone who can reach the port has
+# full read/write access. Setting OBTRAC_API_KEY turns on a gate: every
+# /api/* request must send `Authorization: Bearer <key>`. /health, /docs,
+# and / stay open so basic liveness checks and API docs don't need a key.
+OBTRAC_API_KEY = os.environ.get("OBTRAC_API_KEY", "").strip()
+
+
+@app.middleware("http")
+async def api_key_auth(request: Request, call_next):
+    if OBTRAC_API_KEY and request.url.path.startswith("/api/"):
+        auth_header = request.headers.get("authorization", "")
+        provided = auth_header[7:] if auth_header.lower().startswith("bearer ") else ""
+        if not provided or not secrets.compare_digest(provided, OBTRAC_API_KEY):
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "error": "Unauthorized",
+                    "message": "Missing or invalid API key. Send 'Authorization: Bearer <OBTRAC_API_KEY>'.",
+                },
+            )
+    return await call_next(request)
+
+
+def _clear_orphaned_eval_jobs():
+    """Eval jobs run in daemon threads inside the backend process. If the
+    process dies or gets killed (crash, restart, `obtrac stop`) while a job
+    is mid-flight, that thread dies with it — but the job's DB row is left
+    at status='running' or 'queued' forever, since nothing else was ever
+    going to mark it finished. The dashboard's "resume an in-flight job's
+    spinner on page load" feature then shows that stuck job as perpetually
+    running, indefinitely, even though nothing is actually processing it.
+    A job can't legitimately survive past this process's own restart, so
+    anything still queued/running at boot is from a run this process never
+    finished — mark it failed rather than leaving it stuck."""
+    from app.db.database import SessionLocal
+    from app.db.models import EvalJobRecord
+    from datetime import datetime
+
+    db = SessionLocal()
+    try:
+        stuck = db.query(EvalJobRecord).filter(EvalJobRecord.status.in_(["queued", "running"])).all()
+        for job in stuck:
+            job.status = "failed"
+            job.error = "Interrupted by backend restart — no worker thread survived the process restart to finish this job."
+            job.finished_at = datetime.utcnow()
+        if stuck:
+            db.commit()
+            logger.info(f"Startup cleanup: marked {len(stuck)} orphaned eval job(s) as failed (interrupted by restart)")
+    finally:
+        db.close()
+
+
 @app.on_event("startup")
 def startup_event():
     logger.info("Initializing ObTrac database...")
     init_db()
+    _clear_orphaned_eval_jobs()
+    if OBTRAC_API_KEY:
+        logger.info("API key auth is ENABLED — all /api/* requests require Authorization: Bearer <key>")
+    else:
+        logger.warning(
+            "OBTRAC_API_KEY is not set — the API is running WITHOUT authentication. "
+            "Fine for local-only use; set OBTRAC_API_KEY before exposing this instance "
+            "beyond localhost or a trusted private network."
+        )
     logger.info("ObTrac backend started successfully")
 
 
