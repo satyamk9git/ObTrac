@@ -158,7 +158,7 @@ def build_metrics() -> list[PhoenixMetricAdapter]:
             description=(
                 "Arize Phoenix's factual-accuracy check. Note: Phoenix's CorrectnessEvaluator "
                 "judges from the LLM's own world knowledge — it doesn't take a ground-truth "
-                "answer as input, unlike ObTrac's own answer_correctness metric."
+                "answer as input, unlike Cortexa's own answer_correctness metric."
             ),
             evaluator_cls=CorrectnessEvaluator, threshold=0.7,
             build_eval_input=lambda inp: {"input": inp.question, "output": inp.answer},

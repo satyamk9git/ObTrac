@@ -10,7 +10,7 @@ export default function DBConfigPage() {
           <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 bg-gray-100 text-gray-500 rounded">Coming Soon</span>
         </div>
         <p className="text-sm text-gray-500 mt-1">
-          Connect ObTrac to your own PostgreSQL database via connection string. Schema is auto-migrated. SQLite remains the default if no Postgres is configured.
+          Connect Cortexa to your own PostgreSQL database via connection string. Schema is auto-migrated. SQLite remains the default if no Postgres is configured.
         </p>
       </div>
 

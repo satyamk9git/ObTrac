@@ -129,7 +129,7 @@ export default function ProjectsPage() {
           </div>
           <h3 className="text-lg font-semibold text-gray-700 mb-2">No projects yet</h3>
           <p className="text-sm text-gray-500 max-w-md mx-auto mb-5">
-            Create a project to start logging traces, prompts, and datasets — or run your RAG pipeline with ObTrac decorators and a project will be created automatically.
+            Create a project to start logging traces, prompts, and datasets — or run your RAG pipeline with Cortexa decorators and a project will be created automatically.
           </p>
           <button
             onClick={() => setShowCreate(true)}

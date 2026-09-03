@@ -149,7 +149,7 @@ function AlertsContent() {
                     Channel Name <span className="text-gray-400 font-normal">— use the same Slack channel name the webhook URL was created for</span>
                   </label>
                   <input value={name} onChange={e => setName(e.target.value)} required
-                    className="input-dark" placeholder="#all-obtrac" />
+                    className="input-dark" placeholder="#all-cortexa" />
                   <p className="text-[10px] text-gray-400 mt-1">
                     This is just a display label so you can identify which channel each URL points to. It does NOT change where messages are delivered.
                   </p>

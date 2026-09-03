@@ -7,16 +7,9 @@ import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Legend,
 } from "recharts";
+import { buildMetricColorMap } from "@/lib/metric-colors";
 
 const API = "/api/v1";
-const METRIC_COLORS: Record<string, string> = {
-  faithfulness: "#6366f1",
-  answer_relevancy: "#8b5cf6",
-  context_precision: "#06b6d4",
-  context_recall: "#10b981",
-  answer_correctness: "#f59e0b",
-  answer_similarity: "#ec4899",
-};
 
 function getScoreColor(v: number) {
   if (v >= 0.8) return "text-green-600";
@@ -114,6 +107,7 @@ function MetricsContent() {
 
   const metricNames = perQuery?.metric_names || Object.keys(summary?.avg_metrics || {});
   const hasMetrics = metricNames.length > 0;
+  const metricColors = buildMetricColorMap(metricNames, info);
 
   // Trend chart data — reverse so oldest is left
   const trendData = [...(summary?.metrics_over_time || [])].reverse().map((d: any, i: number) => ({
@@ -400,7 +394,7 @@ function MetricsContent() {
                   <Tooltip formatter={(v: number) => `${v}%`} />
                   <Legend />
                   {metricNames.map((m: string) => (
-                    <Line key={m} type="monotone" dataKey={m} stroke={METRIC_COLORS[m] || "#888"}
+                    <Line key={m} type="monotone" dataKey={m} stroke={metricColors[m] || "#888"}
                       strokeWidth={2} dot={{ r: 3 }} name={info[m]?.name || m} connectNulls />
                   ))}
                 </LineChart>
@@ -418,7 +412,7 @@ function MetricsContent() {
                   <XAxis dataKey="time" tick={{ fontSize: 10 }} />
                   <YAxis tick={{ fontSize: 10 }} tickFormatter={(v: number) => `${v}ms`} />
                   <Tooltip formatter={(v: number) => `${v.toFixed(0)}ms`} />
-                  <Bar dataKey="latency" fill="#6366f1" radius={[4, 4, 0, 0]} name="Latency" />
+                  <Bar dataKey="latency" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} name="Latency" />
                 </BarChart>
               </ResponsiveContainer>
             </div>

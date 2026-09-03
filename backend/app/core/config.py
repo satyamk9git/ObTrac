@@ -6,7 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    APP_NAME: str = "ObTrac"
+    APP_NAME: str = "Cortexa"
     APP_VERSION: str = "0.6.8"
     DEBUG: bool = True
     HOST: str = "0.0.0.0"

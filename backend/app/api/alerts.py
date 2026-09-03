@@ -166,7 +166,7 @@ def test_channel(channel_id: str, db: Session = Depends(get_db)):
         channel,
         event_type="test",
         severity="info",
-        message="Welcome to ObTrac",
+        message="Welcome to Cortexa",
         payload={"test": True, "timestamp": datetime.utcnow().isoformat()},
         db=db,
     )
@@ -228,13 +228,13 @@ def _format_slack_message(event_type: str, severity: str, message: str, payload:
         fields.append({"title": k.replace("_", " ").title(), "value": str(v)[:200], "short": True})
 
     return {
-        "text": f"{icon} *ObTrac Alert: {event_type}*",
+        "text": f"{icon} *Cortexa Alert: {event_type}*",
         "attachments": [
             {
                 "color": color,
                 "text": message,
                 "fields": fields,
-                "footer": "ObTrac",
+                "footer": "Cortexa",
                 "ts": int(datetime.utcnow().timestamp()),
             }
         ],

@@ -42,7 +42,7 @@ function SessionsContent() {
           <h3 className="text-lg font-semibold text-gray-700 mb-2">No sessions yet</h3>
           <p className="text-sm text-gray-500 max-w-lg mx-auto">
             Sessions are created automatically when a <code className="bg-gray-100 px-1 rounded">session_id</code> is detected.
-            ObTrac scans your function arguments — no framework-specific code needed.
+            Cortexa scans your function arguments — no framework-specific code needed.
           </p>
           <div className="mt-4 text-left max-w-lg mx-auto space-y-3">
             <p className="text-xs font-semibold text-gray-500">Option A — pass as a kwarg (works anywhere):</p>

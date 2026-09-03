@@ -128,7 +128,7 @@ def build_metrics() -> list[DeepEvalMetricAdapter]:
     return [
         DeepEvalMetricAdapter(
             key="deepeval_faithfulness", display_name="Faithfulness (DeepEval)",
-            description="DeepEval's faithfulness metric: extracts claims from the answer and checks each against the retrieved context, catching partial hallucination ObTrac's single-score judge can miss.",
+            description="DeepEval's faithfulness metric: extracts claims from the answer and checks each against the retrieved context, catching partial hallucination Cortexa's single-score judge can miss.",
             metric_cls=FaithfulnessMetric, needs_context=True, threshold=0.7,
         ),
         DeepEvalMetricAdapter(
@@ -153,7 +153,7 @@ def build_metrics() -> list[DeepEvalMetricAdapter]:
         ),
         DeepEvalMetricAdapter(
             key="deepeval_hallucination", display_name="Hallucination (DeepEval)",
-            description="Whether the answer contradicts the provided context — a direct contradiction check, distinct from ObTrac's groundedness-style faithfulness score.",
+            description="Whether the answer contradicts the provided context — a direct contradiction check, distinct from Cortexa's groundedness-style faithfulness score.",
             metric_cls=HallucinationMetric, needs_context=True, threshold=0.5,
         ),
         DeepEvalMetricAdapter(
