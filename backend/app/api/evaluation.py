@@ -15,158 +15,58 @@ import logging
 
 from app.db.database import get_db, SessionLocal
 from app.db.models import TraceRecord, GroundTruthRecord, LLMConfigRecord, EvalJobRecord
+from app.services.metrics import MetricInput, MetricRunner, get_registry
 
 logger = logging.getLogger("obtrac")
 
 router = APIRouter(prefix="/evaluation", tags=["evaluation"])
 
-
-# Metric metadata — what each metric does, needs, and thresholds
-METRIC_INFO = {
-    "faithfulness": {
-        "name": "Faithfulness",
-        "description": "Measures if the answer is grounded in the retrieved context. Detects hallucination.",
-        "needs_ground_truth": False,
-        "needs_context": True,
-        "threshold": 0.7,
-        "category": "Generation Quality",
-        "what_it_measures": "How much of the generated answer can be inferred from the retrieved context.",
-        "score_interpretation": {
-            "good": ">=0.8 — Answer is well-grounded in context",
-            "warning": "0.5-0.8 — Some claims not supported by context",
-            "bad": "<0.5 — Significant hallucination detected",
-        },
-        "improvement_tips": [
-            "Lower LLM temperature",
-            "Add 'Only use provided context' to prompt",
-            "Use a more instruction-following model",
-            "Reduce context window to avoid noise",
-        ],
-    },
-    "answer_relevancy": {
-        "name": "Answer Relevancy",
-        "description": "Measures if the answer actually addresses the user's question.",
-        "needs_ground_truth": False,
-        "needs_context": False,
-        "threshold": 0.7,
-        "category": "Generation Quality",
-        "what_it_measures": "Semantic similarity between the question and the generated answer.",
-        "score_interpretation": {
-            "good": ">=0.8 — Answer directly addresses the question",
-            "warning": "0.5-0.8 — Answer partially relevant",
-            "bad": "<0.5 — Answer drifts from the question",
-        },
-        "improvement_tips": [
-            "Rephrase prompt to emphasize answering the exact question",
-            "Add explicit instruction to stay on topic",
-            "Reduce context length to avoid distraction",
-        ],
-    },
-    "context_precision": {
-        "name": "Context Precision",
-        "description": "Measures if relevant chunks are ranked higher than irrelevant ones.",
-        # Ground truth was needed by RAGAS's specific context_precision
-        # implementation; our llm_judge.py judge scores this from just the
-        # question + retrieved context (see JUDGE_PROMPTS["context_precision"]),
-        # so gating it on ground_truth here would wrongly skip it whenever
-        # no ground truth is available — which is most of the time.
-        "needs_ground_truth": False,
-        "needs_context": True,
-        "threshold": 0.6,
-        "category": "Retrieval Quality",
-        "what_it_measures": "Whether the most relevant documents appear at the top of retrieved results.",
-        "score_interpretation": {
-            "good": ">=0.8 — Relevant chunks ranked at top",
-            "warning": "0.5-0.8 — Some irrelevant chunks ranked high",
-            "bad": "<0.5 — Retrieval ranking is poor",
-        },
-        "improvement_tips": [
-            "Add a reranker (Cohere rerank, cross-encoder)",
-            "Tune similarity threshold",
-            "Improve chunking strategy (smaller chunks, better overlap)",
-            "Use hybrid search (BM25 + vector)",
-        ],
-    },
-    "context_recall": {
-        "name": "Context Recall",
-        "description": "Measures if all relevant information needed to answer is retrieved.",
-        "needs_ground_truth": True,
-        "needs_context": True,
-        "threshold": 0.6,
-        "category": "Retrieval Quality",
-        "what_it_measures": "What fraction of the ground truth answer can be attributed to the retrieved context.",
-        "score_interpretation": {
-            "good": ">=0.8 — Most relevant info was retrieved",
-            "warning": "0.5-0.8 — Some relevant info missing",
-            "bad": "<0.5 — Critical information not retrieved",
-        },
-        "improvement_tips": [
-            "Increase top_k retrieval count",
-            "Use hybrid search (BM25 + vector)",
-            "Improve chunking with more overlap",
-            "Check if the answer exists in your knowledge base",
-        ],
-    },
-    "answer_correctness": {
-        "name": "Answer Correctness",
-        "description": "Measures factual correctness of the answer against ground truth.",
-        "needs_ground_truth": True,
-        "needs_context": False,
-        "threshold": 0.7,
-        "category": "End-to-End Quality",
-        "what_it_measures": "Combination of factual similarity and semantic similarity with ground truth.",
-        "score_interpretation": {
-            "good": ">=0.8 — Answer is factually correct",
-            "warning": "0.5-0.8 — Partially correct",
-            "bad": "<0.5 — Significant factual errors",
-        },
-        "improvement_tips": [
-            "Improve retrieval to fetch more relevant context",
-            "Use a stronger generation model",
-            "Add few-shot examples to your prompt",
-        ],
-    },
-    "answer_similarity": {
-        "name": "Answer Similarity",
-        "description": "Measures semantic similarity between the generated answer and ground truth.",
-        "needs_ground_truth": True,
-        "needs_context": False,
-        "threshold": 0.7,
-        "category": "End-to-End Quality",
-        "what_it_measures": "How semantically close the generated answer is to the expected answer.",
-        "score_interpretation": {
-            "good": ">=0.8 — Highly similar to expected answer",
-            "warning": "0.5-0.8 — Somewhat similar",
-            "bad": "<0.5 — Very different from expected",
-        },
-        "improvement_tips": [
-            "Use more explicit prompting",
-            "Increase context window",
-            "Try a model that follows instructions more closely",
-        ],
-    },
+_CATEGORY_DESCRIPTIONS = {
+    "Generation Quality": "Metrics that evaluate the LLM's answer quality",
+    "Retrieval Quality": "Metrics that evaluate the retriever's performance",
+    "End-to-End Quality": "Metrics that evaluate the full RAG pipeline output",
 }
+
+
+def _metric_info() -> dict:
+    """Legacy-shaped METRIC_INFO dict (name/description/needs_*/threshold/
+    category/...), now sourced from the metric registry instead of being
+    its own hardcoded dict — kept as a function (not a module-level
+    constant) so it always reflects whatever's currently registered,
+    including any external-framework metrics registered after import time."""
+    return {key: metric.info_dict() for key, metric in get_registry().all().items()}
+
+
+def _build_contexts(trace) -> list[str]:
+    """Centralizes context-building logic that used to be duplicated at 3
+    call sites in this file. Priority (trace.context string over
+    retrieved_chunks) matches the original per-call-site behavior exactly,
+    since some traces have both populated and the string form was always
+    preferred — external multi-chunk-aware metrics (Part C) get the full
+    retrieved_chunks list directly instead of going through this."""
+    if trace.context:
+        return [trace.context]
+    if trace.retrieved_chunks:
+        return [str(c) for c in trace.retrieved_chunks]
+    return []
 
 
 @router.get("/metrics-info")
 def get_metrics_info():
-    """Get detailed information about all available RAGAS metrics."""
+    """Get detailed information about all available metrics — built-in
+    plus any external-framework adapters (DeepEval/MLflow/Phoenix) that
+    are installed."""
+    info = _metric_info()
+    categories: dict[str, dict] = {}
+    for key, meta in info.items():
+        cat = meta["category"]
+        categories.setdefault(cat, {
+            "description": _CATEGORY_DESCRIPTIONS.get(cat, ""),
+            "metrics": [],
+        })["metrics"].append(key)
     return {
-        "metrics": METRIC_INFO,
-        "categories": {
-            "Generation Quality": {
-                "description": "Metrics that evaluate the LLM's answer quality",
-                "metrics": [k for k, v in METRIC_INFO.items() if v["category"] == "Generation Quality"],
-            },
-            "Retrieval Quality": {
-                "description": "Metrics that evaluate the retriever's performance",
-                "metrics": [k for k, v in METRIC_INFO.items() if v["category"] == "Retrieval Quality"],
-            },
-            "End-to-End Quality": {
-                "description": "Metrics that evaluate the full RAG pipeline output",
-                "metrics": [k for k, v in METRIC_INFO.items() if v["category"] == "End-to-End Quality"],
-            },
-        },
+        "metrics": info,
+        "categories": categories,
     }
 
 
@@ -201,24 +101,23 @@ def run_evaluation(req: EvalRequest, db: Session = Depends(get_db)):
             ground_truth = gt_record.ground_truth
 
     # Check which metrics can run
+    registry = get_registry()
+    contexts = _build_contexts(trace)
+    eval_input = MetricInput(
+        question=trace.query or "", answer=trace.answer or "",
+        contexts=contexts, ground_truth=ground_truth or "",
+        retrieved_chunks=trace.retrieved_chunks or [],
+    )
     runnable_metrics = []
     skipped_metrics = []
     for m in req.metrics:
-        info = METRIC_INFO.get(m)
-        if not info:
+        metric = registry.get(m)
+        if not metric:
             skipped_metrics.append({"metric": m, "reason": f"Unknown metric: {m}"})
             continue
-        if info["needs_ground_truth"] and not ground_truth:
-            skipped_metrics.append({
-                "metric": m,
-                "reason": "Requires ground truth. Upload via Resources or provide directly.",
-            })
-            continue
-        if info["needs_context"] and not trace.context and not trace.retrieved_chunks:
-            skipped_metrics.append({
-                "metric": m,
-                "reason": "No retrieved context available in this trace.",
-            })
+        ok, reason = metric.is_runnable(eval_input)
+        if not ok:
+            skipped_metrics.append({"metric": m, "reason": reason})
             continue
         runnable_metrics.append(m)
 
@@ -230,13 +129,6 @@ def run_evaluation(req: EvalRequest, db: Session = Depends(get_db)):
             "metrics": {},
             "suggestions": [],
         }
-
-    # Build evaluation data
-    contexts = []
-    if trace.context:
-        contexts = [trace.context]
-    elif trace.retrieved_chunks:
-        contexts = [str(c) for c in trace.retrieved_chunks]
 
     # Get judge LLM from LLM Config
     judge_config = None
@@ -277,25 +169,17 @@ def run_evaluation(req: EvalRequest, db: Session = Depends(get_db)):
             "skipped": skipped_metrics,
         }
 
-    # Run evaluation via LLM-as-judge. RAGAS's own package currently has a
-    # broken internal import (langchain_community.chat_models.vertexai —
-    # removed upstream) that isn't fixable by simple version pinning without
-    # breaking langgraph/langchain-openai's newer langchain-core requirement.
-    # app/services/llm_judge.py computes the same metrics via direct prompted
-    # LLM calls, with no ragas/langchain-openai dependency at all.
+    # Run evaluation via the metric registry — built-in metrics are scored
+    # by LLM-as-judge (llm_judge.py), external-framework metrics by their
+    # own adapter (Part C). RAGAS's own package is not used here: its own
+    # internal import (langchain_community.chat_models.vertexai — removed
+    # upstream) isn't fixable by simple version pinning without breaking
+    # langgraph/langchain-openai's newer langchain-core requirement.
     try:
-        from app.services.llm_judge import evaluate_with_llm_judge
         from obtrac_sdk.evaluator import SuggestionEngine
 
-        judge_result = evaluate_with_llm_judge(
-            llm_config=judge_config,
-            question=trace.query or "",
-            answer=trace.answer or "",
-            context=contexts[0] if contexts else "",
-            ground_truth=ground_truth or "",
-            metrics=runnable_metrics,
-        )
-        result_dict = judge_result["metrics"]
+        metric_results = MetricRunner.run(runnable_metrics, eval_input, judge_config)
+        result_dict = {r.metric: r.score for r in metric_results if r.score is not None}
 
         if not result_dict and runnable_metrics:
             return {
@@ -592,19 +476,24 @@ def _execute_multi_llm_eval(
             "error": "No LLMs configured. Go to LLM Config and add at least one LLM.",
         }
 
-    # Filter metrics
+    # Build context, then filter metrics against the registry
+    contexts = _build_contexts(trace)
+    registry = get_registry()
+    eval_input = MetricInput(
+        question=trace.query or "", answer=trace.answer or "",
+        contexts=contexts, ground_truth=ground_truth or "",
+        retrieved_chunks=trace.retrieved_chunks or [],
+    )
     runnable_metrics = []
     skipped_metrics = []
     for m in req.metrics:
-        info = METRIC_INFO.get(m)
-        if not info:
-            skipped_metrics.append({"metric": m, "reason": f"Unknown metric"})
+        metric = registry.get(m)
+        if not metric:
+            skipped_metrics.append({"metric": m, "reason": "Unknown metric"})
             continue
-        if info["needs_ground_truth"] and not ground_truth:
-            skipped_metrics.append({"metric": m, "reason": "Requires ground truth"})
-            continue
-        if info["needs_context"] and not trace.context and not trace.retrieved_chunks:
-            skipped_metrics.append({"metric": m, "reason": "No context available"})
+        ok, reason = metric.is_runnable(eval_input)
+        if not ok:
+            skipped_metrics.append({"metric": m, "reason": reason})
             continue
         runnable_metrics.append(m)
 
@@ -616,13 +505,6 @@ def _execute_multi_llm_eval(
             "llm_results": [],
             "recommendations": {},
         }
-
-    # Build context and dataset
-    contexts = []
-    if trace.context:
-        contexts = [trace.context]
-    elif trace.retrieved_chunks:
-        contexts = [str(c) for c in trace.retrieved_chunks]
 
     # Run evaluation for EACH LLM concurrently — _run_single_llm_eval doesn't
     # touch the DB (it's pure LLM calls), so this is safe to parallelize.
@@ -846,25 +728,20 @@ def cancel_eval_job(job_id: str, db: Session = Depends(get_db)):
 
 
 def _run_single_llm_eval(trace, llm_cfg, metrics, contexts, ground_truth) -> dict:
-    """Run evaluation with a single LLM judge via app.services.llm_judge.
-
-    RAGAS's own package currently has a broken internal import
-    (langchain_community.chat_models.vertexai — removed upstream) that isn't
-    fixable by simple version pinning without breaking langgraph/
-    langchain-openai's newer langchain-core requirement. llm_judge computes
-    the same metrics via direct prompted LLM calls instead."""
+    """Run evaluation with a single LLM judge via the metric registry
+    (app.services.metrics) — built-in metrics score via app.services.llm_judge
+    under the hood; RAGAS itself is not used here (its own package has a
+    broken internal import — langchain_community.chat_models.vertexai,
+    removed upstream — that isn't fixable by simple version pinning without
+    breaking langgraph/langchain-openai's newer langchain-core requirement)."""
     try:
-        from app.services.llm_judge import evaluate_with_llm_judge
-
-        judge_result = evaluate_with_llm_judge(
-            llm_config=llm_cfg,
-            question=trace.query or "",
-            answer=trace.answer or "",
-            context=contexts[0] if contexts else "",
-            ground_truth=ground_truth or "",
-            metrics=metrics,
+        eval_input = MetricInput(
+            question=trace.query or "", answer=trace.answer or "",
+            contexts=contexts, ground_truth=ground_truth or "",
+            retrieved_chunks=trace.retrieved_chunks or [],
         )
-        result_dict = judge_result["metrics"]
+        metric_results = MetricRunner.run(metrics, eval_input, llm_cfg)
+        result_dict = {r.metric: r.score for r in metric_results if r.score is not None}
 
         if not result_dict and metrics:
             return {
@@ -915,8 +792,10 @@ def _generate_detailed_recommendations(trace, llm_results, metrics) -> dict:
                 })
 
     # Per-metric recommendations
+    registry = get_registry()
     for m, scores in metric_scores.items():
-        info = METRIC_INFO.get(m, {})
+        metric_def = registry.get(m)
+        info = metric_def.info_dict() if metric_def else {}
         threshold = info.get("threshold", 0.7)
 
         if not scores:
@@ -1000,7 +879,8 @@ def _generate_detailed_recommendations(trace, llm_results, metrics) -> dict:
         # Find weakest areas
         sorted_metrics = sorted(all_avg_scores.items(), key=lambda x: x[1])
         weakest = sorted_metrics[0]
-        info = METRIC_INFO.get(weakest[0], {})
+        weakest_metric_def = registry.get(weakest[0])
+        info = weakest_metric_def.info_dict() if weakest_metric_def else {}
 
         if weakest[1] < 0.7:
             category = info.get("category", "Unknown")

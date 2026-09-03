@@ -289,5 +289,15 @@ class GroundTruthRecord(Base):
     question = Column(Text, default="")
     ground_truth = Column(Text, default="")
     context = Column(Text, nullable=True)
+    # Additive, nullable — the single-string `context` column above stays
+    # the primary field for ObTrac's own RAGAS-style judges. These two
+    # exist so richer expectations (multi-chunk context, specific tools a
+    # correct answer should have called) have somewhere to live for
+    # external-framework metrics (DeepEval's LLMTestCase wants
+    # retrieval_context as a list; agentic/tool-call metrics need
+    # expected_tools) without requiring every existing ground-truth row to
+    # be migrated.
+    retrieval_context = Column(JSON, nullable=True)  # list[str], multi-chunk context
+    expected_tools = Column(JSON, nullable=True)  # list[str], tools a correct run should call
     metadata_json = Column(JSON, default=dict)
     created_at = Column(DateTime, default=datetime.utcnow)

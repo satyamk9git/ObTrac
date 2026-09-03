@@ -231,16 +231,41 @@ class ExplainRequest(BaseModel):
     llm_config_id: Optional[str] = None
 
 
+def _synthesize_knowledge(metric_key: str) -> Optional[dict]:
+    """Fallback for metrics with no curated METRIC_KNOWLEDGE entry — built
+    from whatever the metric registry knows about it (description,
+    what_it_measures, improvement_tips), so external-framework metrics
+    (DeepEval/MLflow/Phoenix) and custom metrics don't just 404 out of the
+    AI-explain modal. Less detailed than a hand-written entry, but real."""
+    from app.services.metrics import get_registry
+
+    metric_def = get_registry().get(metric_key)
+    if not metric_def:
+        return None
+    return {
+        "what": metric_def.what_it_measures or metric_def.description or f"Measures {metric_key.replace('_', ' ')}.",
+        "scoring": "1.0 = best possible score. 0.0 = worst possible score.",
+        "common_causes_low": [
+            "Specific failure causes aren't cataloged for this metric yet — "
+            "see the improvement techniques below for general guidance.",
+        ],
+        "improvement_techniques": metric_def.improvement_tips or [
+            "No improvement guidance is cataloged for this metric yet.",
+        ],
+    }
+
+
 @router.post("/metric")
 def explain_metric(req: ExplainRequest, db: Session = Depends(get_db)):
     """
     Explain why a metric got a particular score and how to improve it.
 
     Combines:
-    1. Static knowledge base (always returned)
+    1. Static knowledge base if curated, else a registry-derived fallback
+       (always returned — external/custom metrics no longer 404 here)
     2. LLM-generated trace-specific reasoning (optional)
     """
-    knowledge = METRIC_KNOWLEDGE.get(req.metric)
+    knowledge = METRIC_KNOWLEDGE.get(req.metric) or _synthesize_knowledge(req.metric)
     if not knowledge:
         raise HTTPException(404, f"Unknown metric: {req.metric}")
 
