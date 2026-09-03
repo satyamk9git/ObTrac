@@ -7,14 +7,7 @@ import MetricExplainModal from "@/components/MetricExplainModal";
 import MultiSelectPicker, { PickerOption } from "@/components/ui/multi-select-picker";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-
-const METRIC_SOURCE_LABELS: Record<string, string> = {
-  ragas: "RAGAS-style",
-  deepeval: "DeepEval",
-  arize: "Arize Phoenix",
-  mlflow: "MLflow",
-  custom: "Custom",
-};
+import { METRIC_SOURCE_LABELS } from "@/lib/metric-sources";
 
 const LLM_ROLE_LABELS: Record<string, string> = {
   judge: "Judge",

@@ -25,10 +25,10 @@ export type PickerOption = {
   description?: string;
 };
 
-// Fixed priority so related items (e.g. the same metric from different
-// evaluation frameworks) land under separate, ordered, labeled headings
-// instead of registry/array insertion order.
-const GROUP_ORDER = ["ragas", "deepeval", "arize", "mlflow", "custom"];
+// Default priority order for groups whose caller doesn't supply its own
+// (e.g. the judge-LLM picker, grouped by role — "judge"/"generator"/etc.
+// don't match this list, so it just falls back to insertion order there).
+const DEFAULT_GROUP_ORDER = ["ragas", "deepeval", "arize", "mlflow", "custom"];
 
 type MultiSelectPickerProps = {
   options: PickerOption[];
@@ -37,6 +37,7 @@ type MultiSelectPickerProps = {
   placeholder?: string;
   searchPlaceholder?: string;
   groupLabels?: Record<string, string>;
+  groupOrder?: string[];
   emptyText?: string;
   triggerClassName?: string;
 };
@@ -55,6 +56,7 @@ export default function MultiSelectPicker({
   placeholder = "Select...",
   searchPlaceholder = "Search...",
   groupLabels = {},
+  groupOrder = DEFAULT_GROUP_ORDER,
   emptyText = "No results found.",
   triggerClassName,
 }: MultiSelectPickerProps) {
@@ -71,8 +73,8 @@ export default function MultiSelectPicker({
     groups.get(key)!.push(opt);
   }
   const orderedGroupKeys = [
-    ...GROUP_ORDER.filter((g) => groups.has(g)),
-    ...Array.from(groups.keys()).filter((g) => !GROUP_ORDER.includes(g)),
+    ...groupOrder.filter((g) => groups.has(g)),
+    ...Array.from(groups.keys()).filter((g) => !groupOrder.includes(g)),
   ];
 
   const selectedOptions = options.filter((o) => selected.includes(o.value));

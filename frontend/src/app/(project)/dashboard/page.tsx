@@ -3,6 +3,7 @@
 import { useEffect, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
+import { METRIC_SOURCE_LABELS, orderedSources } from "@/lib/metric-sources";
 
 const API = "/api/v1";
 
@@ -20,6 +21,7 @@ function DashboardContent() {
   const project = searchParams.get("project") || "test-rag-app";
   const [summary, setSummary] = useState<any>(null);
   const [recentTraces, setRecentTraces] = useState<any[]>([]);
+  const [metricInfo, setMetricInfo] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
 
   const [bulkJob, setBulkJob] = useState<any>(null);
@@ -29,9 +31,11 @@ function DashboardContent() {
     return Promise.all([
       fetch(`${API}/metrics/summary?project=${encodeURIComponent(project)}`).then((r) => r.json()),
       fetch(`${API}/traces?project=${encodeURIComponent(project)}&limit=10`).then((r) => r.json()),
-    ]).then(([s, t]) => {
+      fetch(`${API}/evaluation/metrics-info`).then((r) => r.json()),
+    ]).then(([s, t, mi]) => {
       setSummary(s);
       setRecentTraces(t.traces || []);
+      setMetricInfo(mi.metrics || {});
     });
   };
 
@@ -178,30 +182,51 @@ function DashboardContent() {
             ))}
           </div>
 
-          {/* Evaluation Metrics */}
-          {Object.keys(summary.avg_metrics || {}).length > 0 && (
-            <>
-              <h2 className="text-base font-semibold text-gray-900 mb-3">Average Evaluation Metrics</h2>
-              <div className="grid grid-cols-3 gap-4 mb-6">
-                {Object.entries(summary.avg_metrics).map(([name, value]) => {
-                  const v = value as number;
-                  const color = v >= 0.8 ? "text-green-600" : v >= 0.6 ? "text-yellow-600" : "text-red-600";
-                  const barColor = v >= 0.8 ? "from-green-500 to-emerald-400" : v >= 0.6 ? "from-yellow-500 to-amber-400" : "from-red-500 to-rose-400";
-                  return (
-                    <div key={name} className="card">
-                      <div className="flex justify-between items-center mb-2">
-                        <span className="text-sm text-gray-400 capitalize">{name.replace(/_/g, " ")}</span>
-                        <span className={`text-xl font-bold ${color}`}>{(v * 100).toFixed(1)}%</span>
-                      </div>
-                      <div className="w-full bg-gray-100 rounded-full h-1.5">
-                        <div className={`h-1.5 rounded-full bg-gradient-to-r ${barColor}`} style={{ width: `${Math.min(v * 100, 100)}%` }} />
+          {/* Evaluation Metrics — grouped by evaluation framework (RAGAS-style /
+              DeepEval / Arize Phoenix / ...) instead of one flat, ungrouped
+              grid with raw snake_case keys as labels. */}
+          {Object.keys(summary.avg_metrics || {}).length > 0 && (() => {
+            const entries = Object.entries(summary.avg_metrics) as [string, number][];
+            const bySource = new Map<string, [string, number][]>();
+            for (const entry of entries) {
+              const source = metricInfo[entry[0]]?.source || "custom";
+              if (!bySource.has(source)) bySource.set(source, []);
+              bySource.get(source)!.push(entry);
+            }
+            return (
+              <>
+                <h2 className="text-base font-semibold text-gray-900 mb-3">Average Evaluation Metrics</h2>
+                <div className="space-y-5 mb-6">
+                  {orderedSources(bySource.keys()).map((source) => (
+                    <div key={source}>
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+                        {METRIC_SOURCE_LABELS[source] || source}
+                      </p>
+                      <div className="grid grid-cols-3 gap-4">
+                        {bySource.get(source)!.map(([name, value]) => {
+                          const v = value;
+                          const displayName = metricInfo[name]?.name || name.replace(/_/g, " ");
+                          const color = v >= 0.8 ? "text-green-600" : v >= 0.6 ? "text-yellow-600" : "text-red-600";
+                          const barColor = v >= 0.8 ? "from-green-500 to-emerald-400" : v >= 0.6 ? "from-yellow-500 to-amber-400" : "from-red-500 to-rose-400";
+                          return (
+                            <div key={name} className="card">
+                              <div className="flex justify-between items-center mb-2">
+                                <span className="text-sm text-gray-400">{displayName}</span>
+                                <span className={`text-xl font-bold ${color}`}>{(v * 100).toFixed(1)}%</span>
+                              </div>
+                              <div className="w-full bg-gray-100 rounded-full h-1.5">
+                                <div className={`h-1.5 rounded-full bg-gradient-to-r ${barColor}`} style={{ width: `${Math.min(v * 100, 100)}%` }} />
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
-                  );
-                })}
-              </div>
-            </>
-          )}
+                  ))}
+                </div>
+              </>
+            );
+          })()}
 
           {/* Recent Traces */}
           <h2 className="text-base font-semibold text-gray-900 mb-3">Recent Traces (Last 10)</h2>
