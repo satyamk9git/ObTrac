@@ -4,6 +4,7 @@ Evaluation API - Run RAGAS metrics on traces, with or without ground truth.
 
 import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -18,26 +19,6 @@ from app.db.models import TraceRecord, GroundTruthRecord, LLMConfigRecord, EvalJ
 logger = logging.getLogger("obtrac")
 
 router = APIRouter(prefix="/evaluation", tags=["evaluation"])
-
-def _build_litellm_model(config: LLMConfigRecord) -> str:
-    """Build the LiteLLM model string from a DB config record."""
-    prefixes = {
-        "openai": "",
-        "azure_openai": "azure/",
-        "anthropic": "anthropic/",
-        "gemini": "gemini/",
-        "vertex_ai": "vertex_ai/",
-        "bedrock": "bedrock/",
-        "ollama": "ollama/",
-        "groq": "groq/",
-        "together": "together_ai/",
-        "huggingface": "huggingface/",
-        "vllm": "openai/",
-    }
-    prefix = prefixes.get(config.provider, "")
-    if config.provider == "azure_openai" and config.azure_deployment:
-        return f"azure/{config.azure_deployment}"
-    return f"{prefix}{config.model_id}"
 
 
 # Metric metadata — what each metric does, needs, and thresholds
@@ -84,7 +65,12 @@ METRIC_INFO = {
     "context_precision": {
         "name": "Context Precision",
         "description": "Measures if relevant chunks are ranked higher than irrelevant ones.",
-        "needs_ground_truth": True,
+        # Ground truth was needed by RAGAS's specific context_precision
+        # implementation; our llm_judge.py judge scores this from just the
+        # question + retrieved context (see JUDGE_PROMPTS["context_precision"]),
+        # so gating it on ground_truth here would wrongly skip it whenever
+        # no ground truth is available — which is most of the time.
+        "needs_ground_truth": False,
         "needs_context": True,
         "threshold": 0.6,
         "category": "Retrieval Quality",
@@ -291,153 +277,32 @@ def run_evaluation(req: EvalRequest, db: Session = Depends(get_db)):
             "skipped": skipped_metrics,
         }
 
-    # Run RAGAS evaluation
+    # Run evaluation via LLM-as-judge. RAGAS's own package currently has a
+    # broken internal import (langchain_community.chat_models.vertexai —
+    # removed upstream) that isn't fixable by simple version pinning without
+    # breaking langgraph/langchain-openai's newer langchain-core requirement.
+    # app/services/llm_judge.py computes the same metrics via direct prompted
+    # LLM calls, with no ragas/langchain-openai dependency at all.
     try:
-        import os
-        from datasets import Dataset
-        from obtrac_sdk.evaluator import _load_ragas_metric, SuggestionEngine
+        from app.services.llm_judge import evaluate_with_llm_judge
+        from obtrac_sdk.evaluator import SuggestionEngine
 
-        ragas_metrics = []
-        metric_names = []
-        for m in runnable_metrics:
-            metric_obj = _load_ragas_metric(m)
-            if metric_obj:
-                ragas_metrics.append(metric_obj)
-                metric_names.append(m)
+        judge_result = evaluate_with_llm_judge(
+            llm_config=judge_config,
+            question=trace.query or "",
+            answer=trace.answer or "",
+            context=contexts[0] if contexts else "",
+            ground_truth=ground_truth or "",
+            metrics=runnable_metrics,
+        )
+        result_dict = judge_result["metrics"]
 
-        if not ragas_metrics:
+        if not result_dict and runnable_metrics:
             return {
                 "trace_id": req.trace_id,
                 "status": "error",
-                "error": "Could not load RAGAS metrics. Check if ragas is installed.",
+                "error": "Judge LLM did not return valid scores for any metric. Check the LLM config and try again.",
                 "skipped": skipped_metrics,
-            }
-
-        data = {
-            "question": [trace.query],
-            "answer": [trace.answer],
-            "contexts": [contexts],
-        }
-        if ground_truth:
-            data["ground_truth"] = [ground_truth]
-
-        dataset = Dataset.from_dict(data)
-
-        # Set env vars from LLM config so RAGAS/LiteLLM can find credentials
-        # Save originals to restore after
-        env_backup = {}
-        if judge_config.provider == "azure_openai":
-            env_vars = {
-                "AZURE_API_KEY": judge_config.api_key or "",
-                "AZURE_API_BASE": judge_config.api_base or "",
-                "AZURE_API_VERSION": judge_config.api_version or "2024-12-01-preview",
-            }
-            for k, v in env_vars.items():
-                env_backup[k] = os.environ.get(k)
-                os.environ[k] = v
-        elif judge_config.api_key:
-            # For OpenAI, Anthropic, etc — set the key RAGAS expects
-            provider_env = {
-                "openai": "OPENAI_API_KEY",
-                "anthropic": "ANTHROPIC_API_KEY",
-                "gemini": "GEMINI_API_KEY",
-                "groq": "GROQ_API_KEY",
-                "together": "TOGETHER_API_KEY",
-            }
-            env_key = provider_env.get(judge_config.provider)
-            if env_key:
-                env_backup[env_key] = os.environ.get(env_key)
-                os.environ[env_key] = judge_config.api_key
-
-        # Build LangChain LLM wrapper via LiteLLM
-        from langchain_community.chat_models import ChatLiteLLM
-        from langchain_community.embeddings import HuggingFaceEmbeddings
-        from ragas.llms import LangchainLLMWrapper
-        from ragas.embeddings import LangchainEmbeddingsWrapper
-
-        llm_model_string = _build_litellm_model(judge_config)
-        llm_kwargs = {}
-        if judge_config.api_key:
-            llm_kwargs["api_key"] = judge_config.api_key
-        if judge_config.api_base:
-            llm_kwargs["api_base"] = judge_config.api_base
-        if judge_config.provider == "azure_openai" and judge_config.api_version:
-            llm_kwargs["api_version"] = judge_config.api_version
-
-        max_tok_key = "max_tokens"
-        if judge_config.provider == "azure_openai":
-            max_tok_key = "max_completion_tokens"
-
-        lc_llm = ChatLiteLLM(
-            model=llm_model_string,
-            temperature=0,
-            **{max_tok_key: 1024},
-            **llm_kwargs,
-        )
-        lc_embeddings = HuggingFaceEmbeddings(
-            model_name="sentence-transformers/all-MiniLM-L6-v2",
-            model_kwargs={"device": "cpu"},
-        )
-
-        # Wrap for RAGAS 0.4.x
-        judge_llm = LangchainLLMWrapper(lc_llm)
-        embeddings = LangchainEmbeddingsWrapper(lc_embeddings)
-
-        from ragas import evaluate as ragas_evaluate
-
-        result = ragas_evaluate(
-            dataset=dataset,
-            metrics=ragas_metrics,
-            llm=judge_llm,
-            embeddings=embeddings,
-        )
-
-        # Restore env vars
-        for k, v in env_backup.items():
-            if v is None:
-                os.environ.pop(k, None)
-            else:
-                os.environ[k] = v
-        import math
-
-        def _extract_score(val):
-            if val is None: return None
-            if isinstance(val, list): val = val[0] if val else None
-            if isinstance(val, dict): val = list(val.values())[0] if val else None
-            if val is None: return None
-            try:
-                f = float(val)
-                return round(f, 4) if not (math.isnan(f) or math.isinf(f)) else None
-            except: return None
-
-        result_dict = {}
-        # Try scores attribute first (RAGAS 0.4.x)
-        if hasattr(result, 'scores') and result.scores:
-            for score_dict in result.scores:
-                if isinstance(score_dict, dict):
-                    for m in metric_names:
-                        v = _extract_score(score_dict.get(m))
-                        if v is not None: result_dict[m] = v
-        # Fallback: dict access
-        if not result_dict:
-            for m in metric_names:
-                try:
-                    v = _extract_score(result[m])
-                    if v is not None: result_dict[m] = v
-                except: pass
-
-        # If RAGAS returned all NaN (Azure compatibility issue), note it
-        if not result_dict and metric_names:
-            logger.warning(f"RAGAS returned NaN for all metrics. This is a known RAGAS 0.4.x + Azure OpenAI issue.")
-            return {
-                "trace_id": req.trace_id,
-                "status": "partial",
-                "metrics": {},
-                "suggestions": ["RAGAS evaluation returned NaN. This is a known compatibility issue with RAGAS 0.4.x and Azure OpenAI. Try running evaluation manually or use a different judge LLM."],
-                "skipped": skipped_metrics,
-                "ground_truth_used": bool(ground_truth),
-                "judge_llm": f"{judge_config.provider}/{judge_config.model_id}",
-                "note": "RAGAS 0.4.x may not fully support Azure OpenAI for some metrics. The LLM call succeeded but RAGAS could not parse the response.",
             }
 
         # Generate suggestions
@@ -502,6 +367,145 @@ def run_batch_evaluation(
         "success": success,
         "failed": len(results) - success,
         "results": results,
+    }
+
+
+# =============================================
+# Bulk "run missing evals" — fills in only the metrics a trace doesn't
+# already have, instead of re-scoring everything (unlike /run-batch).
+# Runs as a background job, reusing EvalJobRecord so it shows up in the
+# same "N evals running" badge as per-trace jobs.
+# =============================================
+
+_BULK_JOB_SENTINEL = "__bulk__"
+
+
+class RunMissingEvalsRequest(BaseModel):
+    project: str
+    metrics: list[str] = ["faithfulness", "answer_relevancy"]
+    judge_llm_config_id: Optional[str] = None
+    limit: int = 200  # how many recent traces to check
+
+
+def _run_missing_evals_job(job_id: str, params: dict):
+    """Daemon-thread worker. Owns its own DB session — never reuse a request session."""
+    db = SessionLocal()
+    try:
+        job = db.query(EvalJobRecord).filter(EvalJobRecord.id == job_id).first()
+        if not job:
+            return
+
+        job.status = "running"
+        job.started_at = datetime.utcnow()
+        job.progress_message = "Scanning traces for missing metrics..."
+        db.commit()
+
+        project = params["project"]
+        wanted_metrics = params["metrics"]
+        judge_llm_config_id = params.get("judge_llm_config_id")
+
+        traces = (
+            db.query(TraceRecord)
+            .filter(TraceRecord.project == project, TraceRecord.status == "success")
+            .order_by(TraceRecord.created_at.desc())
+            .limit(params.get("limit", 200))
+            .all()
+        )
+
+        to_process = []
+        for t in traces:
+            have = set((t.metrics or {}).keys())
+            missing = [m for m in wanted_metrics if m not in have]
+            if missing:
+                to_process.append((t, missing))
+
+        job.progress_message = f"{len(to_process)} of {len(traces)} traces have missing metrics"
+        db.commit()
+
+        evaluated, failed, skipped_no_metrics = 0, 0, 0
+        for i, (trace, missing) in enumerate(to_process):
+            job.progress_message = (
+                f"Evaluating {i + 1}/{len(to_process)} — {trace.trace_id[:8]} "
+                f"(missing: {', '.join(missing)})"
+            )
+            db.commit()
+            try:
+                req = EvalRequest(
+                    trace_id=trace.trace_id,
+                    metrics=missing,
+                    judge_llm_config_id=judge_llm_config_id,
+                )
+                result = run_evaluation(req, db)
+                status = result.get("status")
+                if status == "success":
+                    evaluated += 1
+                elif status == "no_metrics_to_run":
+                    # e.g. needs ground truth this trace doesn't have — not a failure
+                    skipped_no_metrics += 1
+                else:
+                    failed += 1
+            except Exception as e:
+                failed += 1
+                logger.warning(f"Bulk missing-eval failed for {trace.trace_id}: {e}")
+
+        job.status = "completed"
+        job.result = {
+            "project": project,
+            "traces_checked": len(traces),
+            "traces_with_missing_metrics": len(to_process),
+            "evaluated": evaluated,
+            "skipped_no_applicable_metrics": skipped_no_metrics,
+            "failed": failed,
+        }
+        job.progress_message = "Done"
+    except Exception as e:
+        job.status = "failed"
+        job.error = f"{type(e).__name__}: {str(e)[:500]}"
+        logger.exception(f"Bulk missing-eval job {job_id} crashed")
+    finally:
+        job.finished_at = datetime.utcnow()
+        db.commit()
+        db.close()
+
+
+@router.post("/run-missing-async", status_code=202)
+def run_missing_evals_async(req: RunMissingEvalsRequest, db: Session = Depends(get_db)):
+    """
+    Queue a background job that evaluates only the traces (and only the
+    specific metrics) that are currently missing scores — traces that
+    already have a metric keep their existing score untouched, so this is
+    safe to run repeatedly without wasting judge-LLM calls on traces that
+    are already fully scored.
+
+    Poll GET /evaluation/jobs/{id} for progress; the final `result` field
+    has {traces_checked, traces_with_missing_metrics, evaluated, failed}.
+    """
+    job_id = str(uuid.uuid4())
+    job = EvalJobRecord(
+        id=job_id,
+        trace_id=_BULK_JOB_SENTINEL,
+        project=req.project,
+        status="queued",
+        metrics=req.metrics,
+        judge_llm_config_ids=[req.judge_llm_config_id] if req.judge_llm_config_id else [],
+        progress_message="Queued",
+    )
+    db.add(job)
+    db.commit()
+
+    params = {
+        "project": req.project,
+        "metrics": req.metrics,
+        "judge_llm_config_id": req.judge_llm_config_id,
+        "limit": req.limit,
+    }
+    threading.Thread(target=_run_missing_evals_job, args=(job_id, params), daemon=True).start()
+
+    return {
+        "job_id": job_id,
+        "status": "queued",
+        "project": req.project,
+        "message": "Bulk missing-evals job queued. Poll /evaluation/jobs/{job_id} for progress.",
     }
 
 
@@ -620,14 +624,18 @@ def _execute_multi_llm_eval(
     elif trace.retrieved_chunks:
         contexts = [str(c) for c in trace.retrieved_chunks]
 
-    # Run evaluation for EACH LLM
-    llm_results = []
-    for idx, llm_cfg in enumerate(llm_configs):
-        _set_progress(f"Evaluating with {llm_cfg.name} ({idx+1}/{len(llm_configs)})...")
-        llm_result = _run_single_llm_eval(
-            trace, llm_cfg, runnable_metrics, contexts, ground_truth
-        )
-        llm_results.append(llm_result)
+    # Run evaluation for EACH LLM concurrently — _run_single_llm_eval doesn't
+    # touch the DB (it's pure LLM calls), so this is safe to parallelize.
+    # (Previously sequential: N judges took N times as long as one, on top
+    # of each judge's own metrics also having been sequential — see
+    # evaluate_with_llm_judge in llm_judge.py for that half of the fix.)
+    names = ", ".join(c.name for c in llm_configs)
+    _set_progress(f"Evaluating with {len(llm_configs)} judge(s) in parallel: {names}...")
+    with ThreadPoolExecutor(max_workers=min(len(llm_configs), 4)) as pool:
+        llm_results = list(pool.map(
+            lambda cfg: _run_single_llm_eval(trace, cfg, runnable_metrics, contexts, ground_truth),
+            llm_configs,
+        ))
 
     _set_progress("Generating recommendations...")
 
@@ -838,157 +846,35 @@ def cancel_eval_job(job_id: str, db: Session = Depends(get_db)):
 
 
 def _run_single_llm_eval(trace, llm_cfg, metrics, contexts, ground_truth) -> dict:
-    """Run evaluation with a single LLM judge."""
-    import os
+    """Run evaluation with a single LLM judge via app.services.llm_judge.
 
+    RAGAS's own package currently has a broken internal import
+    (langchain_community.chat_models.vertexai — removed upstream) that isn't
+    fixable by simple version pinning without breaking langgraph/
+    langchain-openai's newer langchain-core requirement. llm_judge computes
+    the same metrics via direct prompted LLM calls instead."""
     try:
-        from datasets import Dataset
-        from obtrac_sdk.evaluator import _load_ragas_metric
+        from app.services.llm_judge import evaluate_with_llm_judge
 
-        ragas_metrics = []
-        metric_names = []
-        for m in metrics:
-            obj = _load_ragas_metric(m)
-            if obj:
-                ragas_metrics.append(obj)
-                metric_names.append(m)
+        judge_result = evaluate_with_llm_judge(
+            llm_config=llm_cfg,
+            question=trace.query or "",
+            answer=trace.answer or "",
+            context=contexts[0] if contexts else "",
+            ground_truth=ground_truth or "",
+            metrics=metrics,
+        )
+        result_dict = judge_result["metrics"]
 
-        if not ragas_metrics:
+        if not result_dict and metrics:
             return {
                 "llm_name": llm_cfg.name,
                 "llm_provider": llm_cfg.provider,
                 "llm_model": llm_cfg.model_id,
                 "status": "error",
-                "error": "Could not load metrics",
+                "error": "Judge LLM did not return valid scores for any metric",
                 "metrics": {},
             }
-
-        data = {
-            "question": [trace.query],
-            "answer": [trace.answer],
-            "contexts": [contexts],
-        }
-        if ground_truth:
-            data["ground_truth"] = [ground_truth]
-
-        dataset = Dataset.from_dict(data)
-
-        # Set env vars
-        env_backup = {}
-        if llm_cfg.provider == "azure_openai":
-            env_vars = {
-                "AZURE_API_KEY": llm_cfg.api_key or "",
-                "AZURE_API_BASE": llm_cfg.api_base or "",
-                "AZURE_API_VERSION": llm_cfg.api_version or "2024-12-01-preview",
-            }
-            for k, v in env_vars.items():
-                env_backup[k] = os.environ.get(k)
-                os.environ[k] = v
-        elif llm_cfg.api_key:
-            provider_env = {
-                "openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY",
-                "gemini": "GEMINI_API_KEY", "groq": "GROQ_API_KEY",
-            }
-            env_key = provider_env.get(llm_cfg.provider)
-            if env_key:
-                env_backup[env_key] = os.environ.get(env_key)
-                os.environ[env_key] = llm_cfg.api_key
-
-        from langchain_community.chat_models import ChatLiteLLM
-        from langchain_community.embeddings import HuggingFaceEmbeddings
-        from ragas.llms import LangchainLLMWrapper
-        from ragas.embeddings import LangchainEmbeddingsWrapper
-
-        model_string = _build_litellm_model(llm_cfg)
-        llm_kwargs = {}
-        if llm_cfg.api_key:
-            llm_kwargs["api_key"] = llm_cfg.api_key
-        if llm_cfg.api_base:
-            llm_kwargs["api_base"] = llm_cfg.api_base
-        if llm_cfg.provider == "azure_openai" and llm_cfg.api_version:
-            llm_kwargs["api_version"] = llm_cfg.api_version
-
-        max_tok_key = "max_completion_tokens" if llm_cfg.provider == "azure_openai" else "max_tokens"
-        lc_llm = ChatLiteLLM(
-            model=model_string, temperature=0,
-            **{max_tok_key: 1024}, **llm_kwargs,
-        )
-        lc_embeddings = HuggingFaceEmbeddings(
-            model_name="sentence-transformers/all-MiniLM-L6-v2",
-            model_kwargs={"device": "cpu"},
-        )
-
-        # Wrap for RAGAS 0.4.x
-        judge_llm = LangchainLLMWrapper(lc_llm)
-        embeddings = LangchainEmbeddingsWrapper(lc_embeddings)
-
-        from ragas import evaluate as ragas_evaluate
-        result = ragas_evaluate(
-            dataset=dataset, metrics=ragas_metrics,
-            llm=judge_llm, embeddings=embeddings,
-        )
-
-        # Restore env
-        for k, v in env_backup.items():
-            if v is None:
-                os.environ.pop(k, None)
-            else:
-                os.environ[k] = v
-
-        result_dict = {}
-        # RAGAS 0.4.x: result can be dict-like or have .scores / .to_pandas()
-        import math
-        logger.info(f"RAGAS result type: {type(result)}, scores: {getattr(result, 'scores', None)}")
-
-        def _extract_score(val):
-            """Extract a valid float from RAGAS result value (handles list, nan, None)."""
-            if val is None:
-                return None
-            if isinstance(val, list):
-                val = val[0] if val else None
-            if isinstance(val, dict):
-                val = list(val.values())[0] if val else None
-            if val is None:
-                return None
-            try:
-                f = float(val)
-                if math.isnan(f) or math.isinf(f):
-                    return None
-                return round(f, 4)
-            except (TypeError, ValueError):
-                return None
-
-        # Method 1: scores attribute (RAGAS 0.4.x)
-        if hasattr(result, 'scores') and result.scores:
-            for score_dict in result.scores:
-                if isinstance(score_dict, dict):
-                    for m in metric_names:
-                        if m in score_dict:
-                            v = _extract_score(score_dict[m])
-                            if v is not None:
-                                result_dict[m] = v
-
-        # Method 2: dict-like access
-        if not result_dict:
-            for m in metric_names:
-                try:
-                    v = _extract_score(result[m])
-                    if v is not None:
-                        result_dict[m] = v
-                except (KeyError, TypeError):
-                    pass
-
-        # Method 3: to_pandas
-        if not result_dict and hasattr(result, 'to_pandas'):
-            try:
-                df = result.to_pandas()
-                for m in metric_names:
-                    if m in df.columns:
-                        v = _extract_score(df[m].iloc[0])
-                        if v is not None:
-                            result_dict[m] = v
-            except Exception:
-                pass
 
         return {
             "llm_name": llm_cfg.name,

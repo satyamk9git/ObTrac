@@ -3,6 +3,8 @@ Metric Explanation API — get detailed reasoning + improvement techniques for a
 """
 
 import json
+import re
+import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -11,7 +13,96 @@ from typing import Optional
 from app.db.database import get_db
 from app.db.models import TraceRecord, LLMConfigRecord
 
+logger = logging.getLogger("obtrac")
+
 router = APIRouter(prefix="/explain", tags=["explain"])
+
+
+def _parse_llm_json(text: str) -> Optional[dict]:
+    """
+    Best-effort parse of an LLM response that's supposed to be a single JSON
+    object. Handles markdown code fences and, most importantly, a response
+    that got cut off mid-generation (hit max_tokens) — in that case the
+    braces never close, so a naive json.loads() on the full text fails even
+    though everything up to the cutoff is well-formed.
+
+    Recovery strategy: walk the text tracking open-bracket depth. A comma
+    is only trustworthy as a cut point if we can be SURE both sides of it
+    are complete — which we can only know for certain when it immediately
+    follows a `}`/`]` that just fully closed a nested element (proving
+    that element finished, rather than being cut off mid-way through its
+    own fields). We prefer the last such comma; a comma between simple
+    scalar values (e.g. `"a": 1, "b": 2, "c": "cut off) is only used as a
+    fallback when no closed-element comma exists at all, since at depth 1
+    with only scalars there's no deeper element that could be silently
+    truncated instead.
+    """
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        lines = stripped.split("\n")
+        stripped = "\n".join(lines[1:-1] if lines[-1].startswith("```") else lines[1:])
+        stripped = stripped.strip()
+
+    try:
+        return json.loads(stripped)
+    except json.JSONDecodeError:
+        pass
+
+    start = stripped.find("{")
+    if start == -1:
+        return None
+    body = stripped[start:]
+
+    stack: list[str] = []
+    in_string = False
+    escape = False
+    prev_significant_char = ""
+    safe_after_close = None  # last comma immediately following a `}`/`]`
+    safe_any = None  # last comma anywhere outside a string (fallback)
+
+    for i, ch in enumerate(body):
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+                prev_significant_char = '"'
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch in "{[":
+            stack.append(ch)
+            prev_significant_char = ch
+        elif ch in "}]":
+            if stack:
+                stack.pop()
+            prev_significant_char = ch
+        elif ch == ",":
+            safe_any = (i + 1, list(stack))
+            if prev_significant_char in "}]":
+                safe_after_close = (i + 1, list(stack))
+        elif not ch.isspace():
+            prev_significant_char = ch
+
+    last_safe = safe_after_close or safe_any
+    if last_safe is None:
+        logger.warning(f"Could not parse LLM JSON response (truncated, nothing salvageable): {body[:200]!r}")
+        return None
+
+    cut_index, snapshot_stack = last_safe
+    repaired = body[:cut_index].rstrip().rstrip(",")
+    for opener in reversed(snapshot_stack):
+        repaired += "}" if opener == "{" else "]"
+
+    try:
+        result = json.loads(repaired)
+        logger.info("Recovered truncated LLM JSON response by trimming the incomplete trailing element")
+        return result
+    except json.JSONDecodeError:
+        logger.warning(f"Could not parse LLM JSON even after truncation repair: {body[:200]!r}")
+        return None
 
 
 # Static metric knowledge base
@@ -246,13 +337,15 @@ Reply with ONLY the JSON object, no markdown."""
     kwargs = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.2,
+        # Anthropic models run extended thinking by default and reject
+        # any temperature other than 1 while thinking is active.
+        "temperature": 1 if llm_cfg.provider == "anthropic" else 0.2,
     }
     if llm_cfg.provider == "azure_openai":
-        kwargs["max_completion_tokens"] = 800
+        kwargs["max_completion_tokens"] = 2000
         kwargs["api_version"] = llm_cfg.api_version
     else:
-        kwargs["max_tokens"] = 800
+        kwargs["max_tokens"] = 2000
     if llm_cfg.api_key:
         kwargs["api_key"] = llm_cfg.api_key
     if llm_cfg.api_base:
@@ -261,16 +354,11 @@ Reply with ONLY the JSON object, no markdown."""
     response = completion(**kwargs)
     text = response.choices[0].message.content.strip()
 
-    # Parse JSON
-    if text.startswith("```"):
-        lines = text.split("\n")
-        text = "\n".join(lines[1:-1] if lines[-1].startswith("```") else lines[1:])
-
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        # Fallback: return as plain text
-        return {"diagnosis": text, "evidence": "", "fix": "", "priority": "medium"}
+    parsed = _parse_llm_json(text)
+    if parsed is not None:
+        return parsed
+    # Fallback: return as plain text
+    return {"diagnosis": text, "evidence": "", "fix": "", "priority": "medium"}
 
 
 # =====================================================================
@@ -458,13 +546,15 @@ Return ONLY the JSON object, no markdown fences."""
         kwargs = {
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.2,
+        # Anthropic models run extended thinking by default and reject
+        # any temperature other than 1 while thinking is active.
+        "temperature": 1 if llm_cfg.provider == "anthropic" else 0.2,
         }
         if llm_cfg.provider == "azure_openai":
-            kwargs["max_completion_tokens"] = 1500
+            kwargs["max_completion_tokens"] = 4000
             kwargs["api_version"] = llm_cfg.api_version
         else:
-            kwargs["max_tokens"] = 1500
+            kwargs["max_tokens"] = 4000
         if llm_cfg.api_key:
             kwargs["api_key"] = llm_cfg.api_key
         if llm_cfg.api_base:
@@ -472,13 +562,11 @@ Return ONLY the JSON object, no markdown fences."""
 
         resp = completion(**kwargs)
         text = resp.choices[0].message.content.strip()
-        if text.startswith("```"):
-            lines = text.split("\n")
-            text = "\n".join(lines[1:-1] if lines[-1].startswith("```") else lines[1:])
 
-        try:
-            insights = json.loads(text)
-        except json.JSONDecodeError:
+        parsed = _parse_llm_json(text)
+        if parsed is not None:
+            insights = parsed
+        else:
             insights = {
                 "health": "warning",
                 "headline": "Analysis returned in non-JSON format",
@@ -682,13 +770,15 @@ Return ONLY the JSON, no markdown fences."""
         kwargs = {
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.2,
+        # Anthropic models run extended thinking by default and reject
+        # any temperature other than 1 while thinking is active.
+        "temperature": 1 if llm_cfg.provider == "anthropic" else 0.2,
         }
         if llm_cfg.provider == "azure_openai":
-            kwargs["max_completion_tokens"] = 1500
+            kwargs["max_completion_tokens"] = 3000
             kwargs["api_version"] = llm_cfg.api_version
         else:
-            kwargs["max_tokens"] = 1500
+            kwargs["max_tokens"] = 3000
         if llm_cfg.api_key:
             kwargs["api_key"] = llm_cfg.api_key
         if llm_cfg.api_base:
@@ -696,13 +786,11 @@ Return ONLY the JSON, no markdown fences."""
 
         resp = completion(**kwargs)
         text = resp.choices[0].message.content.strip()
-        if text.startswith("```"):
-            lines = text.split("\n")
-            text = "\n".join(lines[1:-1] if lines[-1].startswith("```") else lines[1:])
 
-        try:
-            insights = json.loads(text)
-        except json.JSONDecodeError:
+        parsed = _parse_llm_json(text)
+        if parsed is not None:
+            insights = parsed
+        else:
             insights = {
                 "summary": "Analysis returned in non-JSON format",
                 "raw_response": text[:1500],

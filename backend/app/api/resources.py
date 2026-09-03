@@ -185,7 +185,7 @@ def delete_ground_truth(record_id: str, db: Session = Depends(get_db)):
 _dataset_embeddings_cache: dict = {}
 
 
-@router.get("/ground-truth/match")
+@router.get("/ground-truth/match-semantic")
 def match_ground_truth_semantic(
     query: str = Query(..., description="The query to match against dataset questions"),
     dataset_name: str = Query(..., description="Name of the dataset to search"),
@@ -416,7 +416,9 @@ async def generate_ground_truth(
         kwargs = {
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.4,
+            # Anthropic models run extended thinking by default and reject
+            # any temperature other than 1 while thinking is active.
+            "temperature": 1 if llm_cfg.provider == "anthropic" else 0.4,
         }
         if llm_cfg.provider == "azure_openai":
             kwargs["max_completion_tokens"] = max_tok

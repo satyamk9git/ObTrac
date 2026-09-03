@@ -159,8 +159,11 @@ class LLMGateway:
         """Build provider-specific kwargs for LiteLLM."""
         kwargs = {
             "temperature": overrides.get("temperature", cfg.temperature),
-            "top_p": overrides.get("top_p", cfg.top_p),
         }
+        # Anthropic rejects requests that specify both temperature and top_p —
+        # only one sampling control is allowed. Temperature is the primary knob.
+        if cfg.provider != LLMProvider.ANTHROPIC:
+            kwargs["top_p"] = overrides.get("top_p", cfg.top_p)
 
         # Azure gpt-4o requires max_completion_tokens instead of max_tokens
         if cfg.provider == LLMProvider.AZURE_OPENAI:

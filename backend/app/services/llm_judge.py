@@ -6,7 +6,10 @@ Uses the configured auto-eval LLM to score traces.
 import json
 import logging
 import math
-from langchain_community.chat_models import ChatLiteLLM
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from types import SimpleNamespace
+
+import litellm
 
 from app.db.models import LLMConfigRecord
 
@@ -67,11 +70,57 @@ Score from 0.0 to 1.0 where:
 - 0.0 = Completely wrong
 
 Reply ONLY with JSON: {{"score": 0.0-1.0, "reason": "one line explanation"}}""",
+
+    "context_recall": """You are an evaluation judge. Score whether the retrieved context contains ALL the information needed to produce the ground truth answer.
+This is about completeness of retrieval, not precision — irrelevant extra chunks don't hurt this score, but missing information does.
+
+Question: {question}
+Ground Truth: {ground_truth}
+Retrieved Context:
+{context}
+
+Score from 0.0 to 1.0 where:
+- 1.0 = Every fact in the ground truth can be found in the retrieved context
+- 0.5 = Some facts from the ground truth are present, others are missing
+- 0.0 = None of the ground truth's facts are present in the retrieved context
+
+Reply ONLY with JSON: {{"score": 0.0-1.0, "reason": "one line explanation"}}""",
+
+    "answer_similarity": """You are an evaluation judge. Score the semantic similarity between the generated answer and the ground truth answer.
+Focus on meaning, not exact wording — a paraphrase that preserves the same facts should score high.
+
+Answer: {answer}
+Ground Truth: {ground_truth}
+
+Score from 0.0 to 1.0 where:
+- 1.0 = Semantically identical meaning, even if worded differently
+- 0.5 = Overlapping but partially different meaning
+- 0.0 = Completely different meaning or topic
+
+Reply ONLY with JSON: {{"score": 0.0-1.0, "reason": "one line explanation"}}""",
 }
 
 
+class _LiteLLMChat:
+    """Minimal ChatLiteLLM replacement — langchain_community 0.4.x removed
+    ChatLiteLLM entirely, so call litellm directly. Only implements
+    .invoke(text) -> obj.content, which is all this module needs."""
+
+    def __init__(self, model, kwargs):
+        self.model = model
+        self.kwargs = kwargs
+
+    def invoke(self, prompt_text: str):
+        resp = litellm.completion(
+            model=self.model,
+            messages=[{"role": "user", "content": prompt_text}],
+            **self.kwargs,
+        )
+        return SimpleNamespace(content=resp.choices[0].message.content)
+
+
 def _build_llm(config: LLMConfigRecord):
-    """Build a LangChain LLM from config."""
+    """Build a litellm-backed chat object from config."""
     prefixes = {
         "openai": "", "azure_openai": "azure/", "anthropic": "anthropic/",
         "gemini": "gemini/", "ollama": "ollama/", "groq": "groq/",
@@ -92,7 +141,41 @@ def _build_llm(config: LLMConfigRecord):
 
     max_tok = "max_completion_tokens" if config.provider == "azure_openai" else "max_tokens"
 
-    return ChatLiteLLM(model=model, temperature=0, **{max_tok: 512}, **kwargs)
+    # Anthropic models run extended thinking by default and reject any
+    # temperature other than 1 (and reject top_p entirely) while thinking
+    # is active.
+    judge_temperature = 1 if config.provider == "anthropic" else 0
+    kwargs["temperature"] = judge_temperature
+    kwargs[max_tok] = 512
+    return _LiteLLMChat(model=model, kwargs=kwargs)
+
+
+def _score_one_metric(llm, metric: str, prompt_template: str, question: str, answer: str,
+                       context: str, ground_truth: str):
+    """Run a single metric's judge prompt. Returns (metric, score, reason) or
+    (metric, None, None) on failure/skip — isolated so it can run in a
+    worker thread alongside the other metrics."""
+    prompt = prompt_template.format(
+        question=question,
+        answer=answer,
+        context=context or "No context provided.",
+        ground_truth=ground_truth or "",
+    )
+    try:
+        response = llm.invoke(prompt)
+        text = response.content.strip()
+
+        if text.startswith("```"):
+            text = text.split("```")[1].lstrip("json\n")
+        parsed = json.loads(text)
+
+        score = float(parsed.get("score", 0))
+        if math.isnan(score) or math.isinf(score):
+            return metric, None, None
+        return metric, round(min(max(score, 0), 1), 4), parsed.get("reason", "")
+    except Exception as e:
+        logger.warning(f"LLM judge failed for {metric}: {e}")
+        return metric, None, None
 
 
 def evaluate_with_llm_judge(
@@ -106,47 +189,41 @@ def evaluate_with_llm_judge(
     """
     Evaluate a trace using LLM-as-judge (no RAGAS dependency).
     Returns {"metrics": {...}, "reasons": {...}, "judge": "..."}
+
+    Each metric is an independent LLM call (its own judge prompt, its own
+    response) — they're run concurrently in a thread pool instead of one
+    after another, since a full 6-metric eval run sequentially was taking
+    six full round-trips (worse with Claude's extended thinking adding
+    per-call latency) when the results don't depend on each other at all.
     """
     metrics = metrics or ["faithfulness", "answer_relevancy"]
     llm = _build_llm(llm_config)
 
-    result_metrics = {}
-    result_reasons = {}
-
+    runnable = []
     for metric in metrics:
         prompt_template = JUDGE_PROMPTS.get(metric)
         if not prompt_template:
             continue
-
-        # Skip context-dependent metrics if no context
         if "{context}" in prompt_template and not context:
             continue
         if "{ground_truth}" in prompt_template and not ground_truth:
             continue
+        runnable.append((metric, prompt_template))
 
-        prompt = prompt_template.format(
-            question=question,
-            answer=answer,
-            context=context or "No context provided.",
-            ground_truth=ground_truth or "",
-        )
+    result_metrics = {}
+    result_reasons = {}
 
-        try:
-            response = llm.invoke(prompt)
-            text = response.content.strip()
-
-            # Parse JSON from response
-            if text.startswith("```"):
-                text = text.split("```")[1].lstrip("json\n")
-            parsed = json.loads(text)
-
-            score = float(parsed.get("score", 0))
-            if not math.isnan(score) and not math.isinf(score):
-                result_metrics[metric] = round(min(max(score, 0), 1), 4)
-                result_reasons[metric] = parsed.get("reason", "")
-
-        except Exception as e:
-            logger.warning(f"LLM judge failed for {metric}: {e}")
+    if runnable:
+        with ThreadPoolExecutor(max_workers=min(len(runnable), 6)) as pool:
+            futures = [
+                pool.submit(_score_one_metric, llm, metric, template, question, answer, context, ground_truth)
+                for metric, template in runnable
+            ]
+            for future in as_completed(futures):
+                metric, score, reason = future.result()
+                if score is not None:
+                    result_metrics[metric] = score
+                    result_reasons[metric] = reason
 
     return {
         "metrics": result_metrics,
