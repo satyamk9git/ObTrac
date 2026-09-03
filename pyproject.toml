@@ -15,48 +15,67 @@ license = { text = "MIT" }
 keywords = ["rag", "observability", "llm", "ragas", "tracing", "evaluation"]
 dependencies = [
     # SDK core
-    "requests>=2.31.0",
-    "tiktoken>=0.7.0",
-    "python-dotenv>=1.0.0",
+    "requests>=2.31.0,<3.0.0",
+    "tiktoken>=0.7.0,<1.0.0",
+    "python-dotenv>=1.0.0,<2.0.0",
 
     # Backend (FastAPI)
-    "fastapi>=0.111.0",
-    "uvicorn[standard]>=0.30.0",
-    "pydantic>=2.7.0",
-    "pydantic-settings>=2.3.0",
-    "python-multipart>=0.0.9",
-    "sqlalchemy>=2.0.30",
+    "fastapi>=0.111.0,<1.0.0",
+    "uvicorn[standard]>=0.30.0,<1.0.0",
+    "pydantic>=2.7.0,<3.0.0",
+    "pydantic-settings>=2.3.0,<3.0.0",
+    "python-multipart>=0.0.9,<1.0.0",
+    "sqlalchemy>=2.0.30,<3.0.0",
+    "cryptography>=42.0.0,<51.0.0",  # app/core/crypto.py — at-rest encryption for provider API keys
 
-    # LLM & Eval
-    "litellm>=1.40.0",
-    "langchain-community>=0.2.0",
-    "langchain-text-splitters>=0.2.0",
-    "datasets>=2.19.0",
+    # LLM & Eval — the langchain/langgraph/ragas family broke hard (removed
+    # classes, cross-incompatible langchain-core majors) on nothing more
+    # than a floor-only ">=" constraint. Pin exact versions here — bump
+    # deliberately, and re-verify RAGAS eval + a LangGraph run still work
+    # (there is no CI coverage for the eval path yet — see CONTRIBUTING.md)
+    # before raising any of these.
+    "litellm==1.98.0",
+    "langchain-community==0.4.2",
+    "langchain-text-splitters==1.1.2",
+    "datasets>=2.19.0,<5.0.0",
+    "openai>=1.30.0,<2.0.0",  # used directly by app/services/embedder.py (openai/azure_openai providers)
 ]
 
 [project.optional-dependencies]
-ragas = ["ragas>=0.4.0", "instructor"]
-mlflow = ["mlflow>=2.14.0"]
+# NOTE: ragas==0.4.3's own package internally imports
+# langchain_community.chat_models.vertexai, which was removed upstream in
+# langchain-community 0.4.x — this is broken regardless of which version of
+# ragas or langchain-community you pick, because langgraph/langchain-openai
+# (also required) need the langchain-core major that only newer
+# langchain-community ships. There is no version combination that satisfies
+# all three at once as of this pin. The backend does NOT depend on this
+# extra — app/services/llm_judge.py computes the same metrics via direct
+# prompted LLM calls instead. Install this only if you're experimenting
+# with obtrac_sdk.evaluator.RAGASEvaluator directly and are prepared to
+# manage the conflict yourself.
+ragas = ["ragas==0.4.3", "instructor==1.16.0"]
+mlflow = ["mlflow>=2.14.0,<3.0.0"]
+postgres = ["psycopg2-binary>=2.9.0,<3.0.0"]  # set DATABASE_URL to postgresql+psycopg2://... to use it
 ui = [
-    "streamlit>=1.35.0",
-    "faiss-cpu>=1.8.0",
-    "sentence-transformers>=3.0.0",
-    "pypdf>=4.0.0",
+    "streamlit>=1.35.0,<2.0.0",
+    "faiss-cpu>=1.8.0,<2.0.0",
+    "sentence-transformers>=3.0.0,<7.0.0",
+    "pypdf>=4.0.0,<7.0.0",
 ]
 agents = [
-    "langgraph>=0.2.0",
-    "langchain-openai>=0.1.0",
+    "langgraph==1.2.11",
+    "langchain-openai==1.6.0",
 ]
 all = [
-    "ragas>=0.4.0",
-    "instructor",
-    "mlflow>=2.14.0",
-    "streamlit>=1.35.0",
-    "faiss-cpu>=1.8.0",
-    "sentence-transformers>=3.0.0",
-    "pypdf>=4.0.0",
-    "langgraph>=0.2.0",
-    "langchain-openai>=0.1.0",
+    "ragas==0.4.3",
+    "instructor==1.16.0",
+    "mlflow>=2.14.0,<3.0.0",
+    "streamlit>=1.35.0,<2.0.0",
+    "faiss-cpu>=1.8.0,<2.0.0",
+    "sentence-transformers>=3.0.0,<7.0.0",
+    "pypdf>=4.0.0,<7.0.0",
+    "langgraph==1.2.11",
+    "langchain-openai==1.6.0",
 ]
 
 [project.scripts]
@@ -68,3 +87,7 @@ Repository = "https://github.com/satyamk9git/ObTrac"
 
 [tool.setuptools.packages.find]
 include = ["obtrac_sdk*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests", "backend/tests"]

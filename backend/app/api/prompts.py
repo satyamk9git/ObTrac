@@ -626,7 +626,9 @@ def merge_versions(
         kwargs = {
             "model": model,
             "messages": [{"role": "user", "content": merge_prompt}],
-            "temperature": 0.2,
+            # Anthropic models run extended thinking by default and reject
+            # any temperature other than 1 while thinking is active.
+            "temperature": 1 if llm_cfg.provider == "anthropic" else 0.2,
         }
         if llm_cfg.provider == "azure_openai":
             kwargs["max_completion_tokens"] = 1024

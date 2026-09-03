@@ -2,43 +2,39 @@ version: "3.8"
 
 services:
   # ObTrac Backend (FastAPI)
+  # Host port matches the CLI-based install (obtrac start) so both
+  # deployment paths land the browser on the same http://localhost:8100.
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
     ports:
-      - "8000:8000"
+      - "8100:8000"
     volumes:
       - ./backend:/app
       - obtrac-data:/app/data
     environment:
-      - MLFLOW_TRACKING_URI=http://mlflow:5000
-    depends_on:
-      - mlflow
-    restart: unless-stopped
-
-  # MLflow Tracking Server
-  mlflow:
-    image: ghcr.io/mlflow/mlflow:v2.14.0
-    ports:
-      - "5000:5000"
-    volumes:
-      - mlflow-data:/mlflow
-    command: >
-      mlflow server
-      --host 0.0.0.0
-      --port 5000
-      --backend-store-uri sqlite:///mlflow/mlflow.db
-      --default-artifact-root /mlflow/artifacts
+      # Uncomment to require auth on the API (also set OBTRAC_API_KEY below
+      # on the frontend service, to the SAME value, so the dashboard proxy
+      # can still authenticate on your behalf).
+      # - OBTRAC_API_KEY=${OBTRAC_API_KEY:-}
+      - OBTRAC_ENCRYPTION_KEY=${OBTRAC_ENCRYPTION_KEY:-}
     restart: unless-stopped
 
   # ObTrac Frontend (Next.js)
+  # Host port matches the CLI-based install (obtrac start:3100).
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
     ports:
-      - "3000:3000"
+      - "3100:3000"
+    environment:
+      # "backend" is the service name above — Docker's internal DNS
+      # resolves it within the compose network. Must NOT be "localhost"
+      # here (that would mean the frontend container itself).
+      - BACKEND_INTERNAL_URL=http://backend:8000
+      # - OBTRAC_API_KEY=${OBTRAC_API_KEY:-}
     depends_on:
       - backend
     restart: unless-stopped
@@ -56,6 +52,24 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
+
+  # MLflow Tracking Server — optional. obtrac_sdk/mlflow_logger.py is a
+  # standalone integration the backend does not call into; nothing in the
+  # core app depends on this service being up, so it's no longer wired as
+  # a `depends_on` for backend. Uncomment if you use MLflowLogger directly.
+  # mlflow:
+  #   image: ghcr.io/mlflow/mlflow:v2.14.0
+  #   ports:
+  #     - "5000:5000"
+  #   volumes:
+  #     - mlflow-data:/mlflow
+  #   command: >
+  #     mlflow server
+  #     --host 0.0.0.0
+  #     --port 5000
+  #     --backend-store-uri sqlite:///mlflow/mlflow.db
+  #     --default-artifact-root /mlflow/artifacts
+  #   restart: unless-stopped
 
 volumes:
   obtrac-data:
