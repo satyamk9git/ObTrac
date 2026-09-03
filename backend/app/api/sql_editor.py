@@ -1,15 +1,49 @@
 """
-SQL Editor API - Execute read-only SQL queries against the ObTrac database.
+SQL Editor API - Execute genuinely read-only SQL queries against the ObTrac
+database.
+
+Read-only is enforced at the database driver/server level, not by
+pattern-matching the query text — a keyword blocklist can always be
+bypassed by rephrasing (CTEs, PRAGMA tricks, ATTACH DATABASE to write
+elsewhere, etc.). On SQLite the file itself is opened with SQLite's own
+`mode=ro` URI flag; on Postgres the connection is opened with
+`postgresql_readonly=True`, which Postgres enforces server-side
+(`SET TRANSACTION READ ONLY`) — either way, a write attempt fails at the
+database itself regardless of how the SQL is phrased.
 """
 
-from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
-from sqlalchemy import text
+import os
+from fastapi import APIRouter
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Engine
 from pydantic import BaseModel
 
-from app.db.database import get_db
+from app.db.database import DATABASE_DIR, DATABASE_URL, IS_SQLITE
 
 router = APIRouter(prefix="/sql", tags=["sql-editor"])
+
+_DB_PATH = os.path.join(DATABASE_DIR, "obtrac.db")
+_readonly_engine: Engine | None = None
+
+
+def _get_readonly_engine() -> Engine:
+    """
+    Lazily create the read-only engine on first use (not at module import
+    time) — the database file may not exist yet when this router is
+    imported at app startup, and SQLite's mode=ro cannot open a
+    not-yet-created file.
+    """
+    global _readonly_engine
+    if _readonly_engine is None:
+        if IS_SQLITE:
+            readonly_url = f"sqlite:///file:{_DB_PATH}?mode=ro&uri=true"
+            _readonly_engine = create_engine(readonly_url, connect_args={"check_same_thread": False})
+        else:
+            # Postgres (or any other SQLAlchemy dialect): enforce read-only
+            # at the server via the transaction characteristic, not just in
+            # this process. Any write raises a server-side error.
+            _readonly_engine = create_engine(DATABASE_URL, execution_options={"postgresql_readonly": True})
+    return _readonly_engine
 
 
 class SQLQuery(BaseModel):
@@ -17,68 +51,66 @@ class SQLQuery(BaseModel):
     limit: int = 100
 
 
-BLOCKED_KEYWORDS = {"drop"}
-
-
 @router.get("/schema")
-def get_schema(db: Session = Depends(get_db)):
+def get_schema():
     """Get all table names and their columns."""
-    tables_raw = db.execute(text("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")).fetchall()
-    tables = []
-    for (tname,) in tables_raw:
-        if tname.startswith("sqlite_") or tname.startswith("_"):
-            continue
-        cols_raw = db.execute(text(f"PRAGMA table_info('{tname}')")).fetchall()
-        columns = [{"name": c[1], "type": c[2], "nullable": not c[3], "pk": bool(c[5])} for c in cols_raw]
-        count = db.execute(text(f"SELECT COUNT(*) FROM '{tname}'")).scalar()
-        tables.append({"name": tname, "columns": columns, "row_count": count})
+    engine = _get_readonly_engine()
+    with engine.connect() as conn:
+        tables_raw = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")).fetchall()
+        tables = []
+        for (tname,) in tables_raw:
+            if tname.startswith("sqlite_") or tname.startswith("_"):
+                continue
+            cols_raw = conn.execute(text(f"PRAGMA table_info('{tname}')")).fetchall()
+            columns = [{"name": c[1], "type": c[2], "nullable": not c[3], "pk": bool(c[5])} for c in cols_raw]
+            count = conn.execute(text(f"SELECT COUNT(*) FROM '{tname}'")).scalar()
+            tables.append({"name": tname, "columns": columns, "row_count": count})
     return {"tables": tables}
 
 
 @router.post("/execute")
-def execute_sql(req: SQLQuery, db: Session = Depends(get_db)):
-    """Execute a read-only SQL query."""
+def execute_sql(req: SQLQuery):
+    """Execute a read-only SQL query. Any write attempt fails at the SQLite
+    driver level (the connection itself is opened read-only), not via
+    keyword filtering."""
     query = req.query.strip()
 
     if not query:
         return {"error": "Empty query", "rows": [], "columns": []}
 
-    # Block write operations
     first_word = query.split()[0].lower() if query.split() else ""
-    if first_word in BLOCKED_KEYWORDS:
-        return {"error": f"Write operation '{first_word.upper()}' not allowed. Read-only access.", "rows": [], "columns": []}
-
-    # Also check for write keywords anywhere (e.g., subqueries)
     query_lower = query.lower()
-    for kw in BLOCKED_KEYWORDS:
-        if f" {kw} " in f" {query_lower} ":
-            return {"error": f"'{kw.upper()}' not allowed. Read-only access.", "rows": [], "columns": []}
 
-    # Add LIMIT only for SELECT queries
+    # Add LIMIT only for SELECT queries — a friendliness nicety, not a
+    # security control (the real guarantee is the read-only connection).
     if first_word == "select" and "limit" not in query_lower:
         query = f"{query} LIMIT {req.limit}"
 
+    engine = _get_readonly_engine()
     try:
-        result = db.execute(text(query))
-
-        if result.returns_rows:
-            columns = list(result.keys())
-            rows = [dict(zip(columns, row)) for row in result.fetchall()]
-            return {"columns": columns, "rows": rows, "row_count": len(rows), "query": req.query}
-        else:
-            # Write operation — commit and return affected rows
-            db.commit()
-            affected = result.rowcount
+        with engine.connect() as conn:
+            result = conn.execute(text(query))
+            if result.returns_rows:
+                columns = list(result.keys())
+                rows = [dict(zip(columns, row)) for row in result.fetchall()]
+                return {"columns": columns, "rows": rows, "row_count": len(rows), "query": req.query}
             return {
-                "columns": ["affected_rows"],
-                "rows": [{"affected_rows": affected}],
-                "row_count": 1,
+                "columns": [],
+                "rows": [],
+                "row_count": 0,
                 "query": req.query,
-                "message": f"{affected} row(s) affected",
+                "message": "Statement executed (no rows returned).",
             }
     except Exception as e:
-        db.rollback()
-        return {"error": str(e), "rows": [], "columns": []}
+        msg = str(e)
+        lowered = msg.lower()
+        if any(s in lowered for s in ("readonly database", "attempt to write", "read-only transaction", "read only transaction")):
+            return {
+                "error": "Write operations are not allowed — the SQL Editor connects to the database read-only. "
+                         "Use the SQL Editor's own value only for querying data.",
+                "rows": [], "columns": [],
+            }
+        return {"error": msg, "rows": [], "columns": []}
 
 
 @router.get("/examples")

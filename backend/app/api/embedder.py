@@ -142,7 +142,7 @@ def get_default(db: Session = Depends(get_db)):
     )
     if not row:
         raise HTTPException(404, "No default embedder configured")
-    return _to_dict(row, mask_secrets=False)
+    return _to_dict(row)
 
 
 @router.post("", status_code=201)

@@ -1,5 +1,16 @@
 """
-SQLite database setup with SQLAlchemy.
+Database setup with SQLAlchemy. SQLite by default (zero setup, matches
+ObTrac's self-hosted-first design); set DATABASE_URL to point at Postgres
+instead for higher write concurrency than SQLite can offer.
+
+Postgres support here is implemented (dialect-agnostic engine config, the
+auto-migration path compiles column types via SQLAlchemy's dialect
+compiler rather than hardcoded SQLite type strings) but has not been
+exercised against a live Postgres server in this codebase's test history —
+verify against a disposable database before relying on it for anything you
+can't afford to lose. Needs `pip install psycopg2-binary` (not bundled by
+default, to avoid forcing a C-extension build for the common SQLite-only
+case).
 """
 
 import logging
@@ -12,11 +23,16 @@ logger = logging.getLogger("obtrac")
 DATABASE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data")
 os.makedirs(DATABASE_DIR, exist_ok=True)
 
-DATABASE_URL = f"sqlite:///{os.path.join(DATABASE_DIR, 'obtrac.db')}"
+DATABASE_URL = os.environ.get("DATABASE_URL") or f"sqlite:///{os.path.join(DATABASE_DIR, 'obtrac.db')}"
+IS_SQLITE = DATABASE_URL.startswith("sqlite")
 
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+_connect_args = {"check_same_thread": False} if IS_SQLITE else {}
+engine = create_engine(DATABASE_URL, connect_args=_connect_args)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
+
+if not IS_SQLITE:
+    logger.info(f"Using external database (dialect: {engine.dialect.name})")
 
 
 def get_db():
@@ -27,25 +43,26 @@ def get_db():
         db.close()
 
 
-# Map SQLAlchemy column types to SQLite ALTER TABLE column type strings
-def _sqlite_type(col) -> str:
-    """Best-effort SQLAlchemy → SQLite type string for ALTER TABLE ADD COLUMN."""
+# Map SQLAlchemy column types to the active dialect's ALTER TABLE column
+# type string (works for SQLite or Postgres — whichever DATABASE_URL points at)
+def _compiled_column_type(col) -> str:
+    """Best-effort SQLAlchemy -> SQL type string for ALTER TABLE ADD COLUMN,
+    compiled against whichever dialect is actually active."""
     try:
         return col.type.compile(dialect=engine.dialect)
     except Exception:
-        # Fallback by Python type
+        # Fallback by Python type — SQLite is loosely typed so these type
+        # affinities work there; on Postgres BOOLEAN/BYTEA are the correct
+        # names (not SQLite's INTEGER/BLOB), so branch on dialect.
         py_type = getattr(col.type, "python_type", str)
-        return {
-            int: "INTEGER",
-            float: "REAL",
-            bool: "INTEGER",
-            bytes: "BLOB",
-        }.get(py_type, "TEXT")
+        if IS_SQLITE:
+            return {int: "INTEGER", float: "REAL", bool: "INTEGER", bytes: "BLOB"}.get(py_type, "TEXT")
+        return {int: "INTEGER", float: "DOUBLE PRECISION", bool: "BOOLEAN", bytes: "BYTEA"}.get(py_type, "TEXT")
 
 
 def _add_missing_columns():
-    """Compare each ORM model against the live SQLite schema and ALTER ADD
-    any columns that exist in the model but not in the table. Idempotent.
+    """Compare each ORM model against the live schema and ALTER ADD any
+    columns that exist in the model but not in the table. Idempotent.
 
     This is a lightweight in-place migration so existing installs upgrading
     to a newer schema don't crash on inserts referencing new columns. It
@@ -61,7 +78,7 @@ def _add_missing_columns():
         for col in table.columns:
             if col.name in existing_cols:
                 continue
-            col_type = _sqlite_type(col)
+            col_type = _compiled_column_type(col)
             nullable = "" if col.nullable else " NOT NULL"
             default_clause = ""
             if col.default is not None and getattr(col.default, "is_scalar", False):

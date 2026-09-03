@@ -234,7 +234,10 @@ def create_project(data: ProjectCreate, db: Session = Depends(get_db)):
 def delete_project(name: str, db: Session = Depends(get_db)):
     """Delete a user-created project entry. Does NOT delete traces/prompts
     that reference this project name — only removes it from the explicit
-    projects table."""
+    projects table. For projects that have trace history, this is close to
+    a no-op from the dashboard's point of view (list_projects() re-derives
+    the project from its traces either way) — use DELETE /projects/{name}/purge
+    to actually remove a project's data."""
     project = db.query(ProjectRecord).filter(ProjectRecord.name == name).first()
     if not project:
         raise HTTPException(404, f"Project '{name}' not found")
@@ -243,11 +246,47 @@ def delete_project(name: str, db: Session = Depends(get_db)):
     return {"status": "deleted", "name": name}
 
 
+@router.delete("/projects/{name}/purge")
+def purge_project(name: str, db: Session = Depends(get_db)):
+    """Permanently delete a project and ALL of its data: every trace (and
+    their spans, via cascade) plus the projects-table entry if one exists.
+    This is the operation the dashboard's project card delete button uses —
+    plain DELETE /projects/{name} only removes the lightweight registry
+    entry and leaves trace history in place, which isn't what "delete this
+    project" means to a user looking at a card full of traces.
+
+    Does NOT touch prompts (global, not project-scoped) or budgets/alert
+    channels referencing this project name — those are left in place."""
+    traces = db.query(TraceRecord).filter(TraceRecord.project == name).all()
+    trace_count = len(traces)
+    for t in traces:
+        db.delete(t)  # cascades to spans via the relationship's cascade="all, delete-orphan"
+
+    project = db.query(ProjectRecord).filter(ProjectRecord.name == name).first()
+    had_registry_entry = project is not None
+    if project:
+        db.delete(project)
+
+    if trace_count == 0 and not had_registry_entry:
+        raise HTTPException(404, f"Project '{name}' not found")
+
+    db.commit()
+    return {"status": "purged", "name": name, "traces_deleted": trace_count}
+
+
 @router.get("/projects")
 def list_projects(db: Session = Depends(get_db)):
     """List all projects with rich stats. Merges user-created projects
     (from the projects table) with projects implicitly derived from traces."""
     from sqlalchemy import func
+    import math
+
+    def _safe(v):
+        try:
+            f = float(v)
+            return f if not (math.isnan(f) or math.isinf(f)) else None
+        except (TypeError, ValueError):
+            return None
 
     # 1. Projects implicitly derived from trace activity
     trace_projects = (
@@ -271,6 +310,25 @@ def list_projects(db: Session = Depends(get_db)):
             TraceRecord.project == p.project, TraceRecord.status == "error"
         ).scalar() or 0
 
+        # Quality score: mean of each evaluated trace's own average metric
+        # score. Distinct from "success" (did the code run without an
+        # exception) — this reflects RAGAS-style answer quality. None when
+        # no trace in the project has been evaluated yet, so the frontend
+        # can show "not evaluated" instead of a misleading 0%.
+        metric_rows = (
+            db.query(TraceRecord.metrics)
+            .filter(TraceRecord.project == p.project, TraceRecord.metrics.isnot(None))
+            .all()
+        )
+        per_trace_avgs = []
+        for (metrics,) in metric_rows:
+            if not metrics:
+                continue
+            values = [v for v in (_safe(x) for x in metrics.values()) if v is not None]
+            if values:
+                per_trace_avgs.append(sum(values) / len(values))
+        avg_quality_score = round(sum(per_trace_avgs) / len(per_trace_avgs), 4) if per_trace_avgs else None
+
         by_name[p.project] = {
             "name": p.project,
             "count": p.count,
@@ -278,6 +336,8 @@ def list_projects(db: Session = Depends(get_db)):
             "error": error,
             "avg_latency_ms": round(p.avg_latency or 0, 1),
             "total_cost_usd": round(float(p.total_cost or 0), 6),
+            "avg_quality_score": avg_quality_score,
+            "evaluated_traces": len(per_trace_avgs),
             "last_activity": p.last_activity.isoformat() if p.last_activity else None,
             "user_created": False,
         }
@@ -295,6 +355,8 @@ def list_projects(db: Session = Depends(get_db)):
                 "error": 0,
                 "avg_latency_ms": 0,
                 "total_cost_usd": 0,
+                "avg_quality_score": None,
+                "evaluated_traces": 0,
                 "last_activity": proj.created_at.isoformat(),
                 "user_created": True,
                 "description": proj.description,

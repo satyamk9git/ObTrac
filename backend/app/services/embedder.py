@@ -87,27 +87,45 @@ def get_embeddings(
 # ----------------------------- Providers ----------------------------------
 
 def _embed_sentence_transformers(model_id: str, texts: Sequence[str]) -> list[list[float]]:
-    """Local CPU embedding via sentence-transformers. No API key required."""
+    """Local CPU embedding via sentence-transformers. No API key required.
+
+    device="cpu" is explicit and load-bearing, not cosmetic: without it,
+    sentence-transformers auto-detects and picks Apple's MPS (GPU) backend
+    on Apple Silicon, which has intermittently hard-crashed this backend's
+    entire process (not a catchable Python exception — the process just
+    disappears, taking every in-flight request down with it). A single
+    short string doesn't need GPU acceleration; CPU is both fast enough and
+    far more stable for a long-running background service."""
     cache_key = ("sentence_transformers", model_id)
     with _cache_lock:
         model = _local_model_cache.get(cache_key)
         if model is None:
             from sentence_transformers import SentenceTransformer
-            model = SentenceTransformer(model_id)
+            model = SentenceTransformer(model_id, device="cpu")
             _local_model_cache[cache_key] = model
     vectors = model.encode(list(texts), convert_to_numpy=True, show_progress_bar=False)
     return vectors.tolist()
 
 
 def _embed_openai(cfg: EmbedderConfigRecord, texts: Sequence[str]) -> list[list[float]]:
-    from openai import OpenAI
+    try:
+        from openai import OpenAI
+    except ImportError:
+        raise RuntimeError(
+            "The 'openai' package is not installed. Run: pip install openai"
+        )
     client = OpenAI(api_key=cfg.api_key, base_url=cfg.api_base or None)
     resp = client.embeddings.create(input=list(texts), model=cfg.model_id)
     return [d.embedding for d in resp.data]
 
 
 def _embed_azure_openai(cfg: EmbedderConfigRecord, texts: Sequence[str]) -> list[list[float]]:
-    from openai import AzureOpenAI
+    try:
+        from openai import AzureOpenAI
+    except ImportError:
+        raise RuntimeError(
+            "The 'openai' package is not installed. Run: pip install openai"
+        )
     client = AzureOpenAI(
         api_key=cfg.api_key,
         api_version=cfg.api_version or "2024-02-01",
@@ -119,14 +137,25 @@ def _embed_azure_openai(cfg: EmbedderConfigRecord, texts: Sequence[str]) -> list
 
 
 def _embed_cohere(cfg: EmbedderConfigRecord, texts: Sequence[str]) -> list[list[float]]:
-    import cohere
+    try:
+        import cohere
+    except ImportError:
+        raise RuntimeError(
+            "The 'cohere' package is not installed. Run: pip install cohere"
+        )
     client = cohere.Client(api_key=cfg.api_key)
     resp = client.embed(texts=list(texts), model=cfg.model_id, input_type="search_document")
     return list(resp.embeddings)
 
 
 def _embed_vertex(cfg: EmbedderConfigRecord, texts: Sequence[str]) -> list[list[float]]:
-    from vertexai.language_models import TextEmbeddingModel
+    try:
+        from vertexai.language_models import TextEmbeddingModel
+    except ImportError:
+        raise RuntimeError(
+            "The 'google-cloud-aiplatform' package is not installed. "
+            "Run: pip install google-cloud-aiplatform"
+        )
     model = TextEmbeddingModel.from_pretrained(cfg.model_id)
     embeddings = model.get_embeddings(list(texts))
     return [e.values for e in embeddings]
