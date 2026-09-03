@@ -308,6 +308,6 @@ The auto-migration on backend startup will add any missing columns if the schema
 
 ## Going further
 
-- [README.md](README.md) — full feature documentation and SDK reference
-- [EXAMPLES.md](EXAMPLES.md) — code recipes for RAG, agents, LangChain, LangGraph, Google ADK
+- [README.md](../README.md) — full feature documentation and SDK reference
+- [examples.md](examples.md) — code recipes for RAG, agents, LangChain, LangGraph, Google ADK
 - [github.com/satyamk9git/ObTrac](https://github.com/satyamk9git/ObTrac) — issues, PRs, releases

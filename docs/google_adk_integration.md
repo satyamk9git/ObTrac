@@ -101,7 +101,7 @@ adk web my_agent   # serves one specific agent
 
 ## 5. Step 1 — Copy the callbacks module
 
-Copy `test_gadk/callbacks/` from the ObTrac repo into your project root.
+Copy `demos/google_adk/callbacks/` from the ObTrac repo into your project root.
 The key file is `callbacks/obtrac_callback.py`.
 
 ```

@@ -14,7 +14,7 @@ cd backend && uvicorn app.main:app --reload --port 8100 &
 cd ../frontend && npm install && npm run dev
 ```
 
-See [SETUP_NEW_MACHINE.md](SETUP_NEW_MACHINE.md) for the full walkthrough.
+See [docs/setup_new_machine.md](docs/setup_new_machine.md) for the full walkthrough.
 
 ## Before opening a PR
 

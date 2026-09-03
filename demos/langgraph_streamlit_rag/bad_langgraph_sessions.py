@@ -24,18 +24,18 @@ that doesn't touch the app's own pipeline code.
 
 Run:
     source .venv/bin/activate
-    python test_app/bad_langgraph_sessions.py
+    python demos/langgraph_streamlit_rag/bad_langgraph_sessions.py
 """
 import os
 import sys
 import time
 import json
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from obtrac_sdk import obtrac_config
 
-from test_app import bad_langgraph_app as bla
+from demos.langgraph_streamlit_rag import bad_langgraph_app as bla
 
 LOG_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "session_run_log.json"

@@ -110,7 +110,7 @@ with open(os.path.join(os.path.dirname(__file__), "eval_results.json"), "w") as 
     json.dump(results, f, indent=2)
 
 print(f"\nDone. {len(results)} traces evaluated and written to the DB.")
-print("Wrote test_documents/eval_results.json")
+print("Wrote scripts/dev/eval_results.json")
 
 print("\n=== Failure-scenario scores ===")
 for r in results:

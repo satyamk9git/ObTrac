@@ -79,7 +79,7 @@ for i, (trace_id, status, entry) in enumerate(pairs):
 with open(os.path.join(os.path.dirname(__file__), "eval_results.json"), "w") as f:
     json.dump(results, f, indent=2)
 
-print(f"\nDone. {len(results)} traces evaluated. Wrote test_documents/eval_results.json")
+print(f"\nDone. {len(results)} traces evaluated. Wrote scripts/dev/eval_results.json")
 
 # Quick summary: flag the deliberate failure scenarios and their actual scores
 print("\n=== Failure-scenario scores ===")

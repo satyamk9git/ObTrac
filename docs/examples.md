@@ -1130,4 +1130,4 @@ In dashboard:
 
 ---
 
-For framework setup and basic usage, see [README.md](README.md).
+For framework setup and basic usage, see [README.md](../README.md).

@@ -584,4 +584,4 @@ Open an issue at https://github.com/satyamk9git/ObTrac/issues
 
 ---
 
-See [SETUP_NEW_MACHINE.md](SETUP_NEW_MACHINE.md) for the new-machine onboarding flow and [EXAMPLES.md](EXAMPLES.md) for code recipes covering RAG, agents, LangChain, LangGraph, Google ADK, and edge cases.
+See [docs/setup_new_machine.md](docs/setup_new_machine.md) for the new-machine onboarding flow and [docs/examples.md](docs/examples.md) for code recipes covering RAG, agents, LangChain, LangGraph, Google ADK, and edge cases.

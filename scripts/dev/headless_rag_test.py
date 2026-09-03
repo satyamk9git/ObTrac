@@ -1,10 +1,10 @@
 """
 Headless verification of the LangGraph RAG pipeline against the needle-in-haystack PDF.
-Mirrors test_app/langgraph_app.py's graph logic (retrieve -> generate -> review) without
+Mirrors demos/langgraph_streamlit_rag/langgraph_app.py's graph logic (retrieve -> generate -> review) without
 the Streamlit UI, so it can run non-interactively and print a pass/fail.
 
 Run:
-    python test_documents/headless_rag_test.py
+    python scripts/dev/headless_rag_test.py
 """
 import os
 import sys

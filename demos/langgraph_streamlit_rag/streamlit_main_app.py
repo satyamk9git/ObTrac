@@ -24,8 +24,8 @@ import litellm
 import streamlit as st
 from dotenv import load_dotenv
 
-# Make test_app importable when launched from project root
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+# Make demos/ importable when launched from project root
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 load_dotenv()
 
@@ -35,7 +35,7 @@ from langchain_community.vectorstores import FAISS
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from obtrac_sdk import get_prompt, obtrac_config, trace
-from test_app.agent import run_agent
+from demos.simple_multi_tool_agent.agent import run_agent
 
 # ---------------------------------------------------------------------------
 # Page config

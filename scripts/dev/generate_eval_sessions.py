@@ -294,4 +294,4 @@ with open(os.path.join(os.path.dirname(__file__), "session_log.json"), "w") as f
     json.dump(results_log, f, indent=2)
 
 print(f"\nDone. {len(results_log)} question-turns logged across {len(SESSIONS)} sessions.")
-print("Wrote test_documents/session_log.json")
+print("Wrote scripts/dev/session_log.json")

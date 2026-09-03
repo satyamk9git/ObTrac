@@ -13,11 +13,11 @@ ObTrac integration:
   - session_id from ADK session auto-detected — Sessions page shows conversation
 
 Run with:
-    adk web test_gadk/rag_qa_agent
+    adk web demos/google_adk/rag_qa_agent
     # then open http://localhost:8000
 
 Or run both agents together:
-    cd test_gadk && adk web .
+    cd demos/google_adk && adk web .
 """
 
 import os

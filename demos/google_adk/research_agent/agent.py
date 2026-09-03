@@ -12,16 +12,16 @@ ObTrac integration:
   - session_id auto-detected from ToolContext.invocation_context.session.id
 
 Run with:
-    adk web test_gadk/research_agent
+    adk web demos/google_adk/research_agent
     # then open http://localhost:8000
 """
 
 import os
 import sys
 
-# ADK adds test_gadk/ to sys.path — ensure it so sibling packages
+# ADK adds demos/google_adk/ to sys.path — ensure it so sibling packages
 # (tools/, callbacks/) are importable directly.
-_GADK_ROOT = os.path.dirname(os.path.dirname(__file__))   # .../test_gadk/
+_GADK_ROOT = os.path.dirname(os.path.dirname(__file__))   # .../demos/google_adk/
 _PROJECT_ROOT = os.path.dirname(_GADK_ROOT)               # .../ObTrac/
 for _p in (_GADK_ROOT, _PROJECT_ROOT):
     if _p not in sys.path:

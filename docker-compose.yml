@@ -43,11 +43,11 @@ services:
   test-app:
     build:
       context: .
-      dockerfile: test_app/Dockerfile
+      dockerfile: demos/langgraph_streamlit_rag/Dockerfile
     ports:
       - "8501:8501"
     volumes:
-      - ./test_app:/app/test_app
+      - ./demos:/app/demos
       - ./backend:/app/backend
     depends_on:
       - backend

@@ -1,6 +1,6 @@
 """
 Exercises the prompt registry's versioning + AI-merge features against the
-"rag_answer" prompt already registered by test_app/prompts_setup.py:
+"rag_answer" prompt already registered by demos/langgraph_streamlit_rag/prompts_setup.py:
 
   1. Create v2 — a stricter variant (explicit "cite exact source phrase")
   2. Create v3 — a different variant (explicit max-length constraint)

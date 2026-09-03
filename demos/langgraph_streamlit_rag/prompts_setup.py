@@ -2,7 +2,7 @@
 One-time prompt setup — registers all prompts used by the test app
 in the ObTrac registry.  Run once before starting the Streamlit app:
 
-    python test_app/prompts_setup.py
+    python demos/langgraph_streamlit_rag/prompts_setup.py
 
 Safe to run multiple times (skips prompts that already exist).
 """
@@ -126,7 +126,7 @@ def setup_prompts():
     print(f"\nDone. Created: {len(created)} | Skipped (already exist): {len(skipped)}")
     print("\nPrompts in registry:", ", ".join(created + list(skipped)))
     print("\nYou can now run the Streamlit app:")
-    print("  streamlit run test_app/streamlit_main_app.py")
+    print("  streamlit run demos/langgraph_streamlit_rag/streamlit_main_app.py")
 
 
 if __name__ == "__main__":

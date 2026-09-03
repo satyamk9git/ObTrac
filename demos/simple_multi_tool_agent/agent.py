@@ -18,7 +18,7 @@ import litellm
 from dotenv import load_dotenv
 
 from obtrac_sdk import trace, get_prompt
-from test_app.tools import calculator, get_datetime, web_search, summarize_text, unit_converter
+from demos.simple_multi_tool_agent.tools import calculator, get_datetime, web_search, summarize_text, unit_converter
 
 load_dotenv()
 

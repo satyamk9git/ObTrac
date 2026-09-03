@@ -5,7 +5,7 @@ Purpose: exercise ObTrac's dashboard with genuinely low RAGAS-style scores
 (faithfulness, answer_relevancy, context_precision, context_recall,
 answer_correctness, answer_similarity) — for real, not faked.
 
-Design of the badness (see test_app/langgraph_app.py for the GOOD reference
+Design of the badness (see demos/langgraph_streamlit_rag/langgraph_app.py for the GOOD reference
 pipeline this deliberately inverts):
   1. Narrow corpus (Solstice Robotics Q3-2026-ONLY earnings summary) +
      questions about adjacent-but-uncovered topics (Q1 2026, YoY comparisons,
@@ -30,7 +30,7 @@ pipeline this deliberately inverts):
 
 Run directly as a script (not Streamlit) for testability:
     source .venv/bin/activate
-    python test_app/bad_langgraph_app.py
+    python demos/langgraph_streamlit_rag/bad_langgraph_app.py
 """
 import os
 import sys
@@ -65,8 +65,8 @@ RAG_EVAL_METRICS = [
 ]
 
 CORPUS_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "test_documents",
+    os.path.dirname(os.path.abspath(__file__)),
+    "fixtures",
     "solstice_q3_2026_earnings.txt",
 )
 
@@ -215,7 +215,7 @@ def run_pipeline(query: str, ground_truth: str = None) -> str:
 
 
 # --- Test battery: plausible-but-NOT-covered questions -----------------
-# The corpus (test_documents/solstice_q3_2026_earnings.txt) covers ONLY
+# The corpus (demos/langgraph_streamlit_rag/fixtures/solstice_q3_2026_earnings.txt) covers ONLY
 # Q3 2026 (Jul-Sep 2026) in isolation: no Q1/Q2 2026 figures, no prior-year
 # (2025) figures, no full-year totals, no competitor names, no YoY deltas.
 # Each question below is topically adjacent (same company, same general
