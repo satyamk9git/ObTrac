@@ -4,6 +4,25 @@ import { useEffect, useState, Suspense } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import SpanTree from "@/components/SpanTree";
 import MetricExplainModal from "@/components/MetricExplainModal";
+import MultiSelectPicker, { PickerOption } from "@/components/ui/multi-select-picker";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
+
+const METRIC_SOURCE_LABELS: Record<string, string> = {
+  obtrac: "Cortexa Built-in",
+  deepeval: "DeepEval",
+  arize: "Arize Phoenix",
+  mlflow: "MLflow",
+  custom: "Custom",
+};
+
+const LLM_ROLE_LABELS: Record<string, string> = {
+  judge: "Judge",
+  generator: "Generator",
+  master: "Master",
+  embedder: "Embedder",
+  custom: "Custom",
+};
 
 const API = "/api/v1";
 
@@ -201,16 +220,6 @@ function TraceDetailContent() {
     }
   };
 
-  const toggleMetric = (m: string) =>
-    setSelectedMetrics((prev) =>
-      prev.includes(m) ? prev.filter((x) => x !== m) : [...prev, m]
-    );
-
-  const toggleLLM = (id: string) =>
-    setSelectedLLMs((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
-    );
-
   if (loading) return <p className="text-gray-500">Loading trace...</p>;
   if (!trace) return (
     <div>
@@ -366,7 +375,7 @@ function TraceDetailContent() {
 
                 return (
                   <details key={span.span_id || i} open={i === 0}>
-                    <summary className="cursor-pointer text-sm font-medium text-gray-700 hover:text-primary-600 flex items-center gap-2">
+                    <summary className="cursor-pointer text-sm font-medium text-gray-700 hover:text-primary flex items-center gap-2">
                       <span className="bg-purple-100 text-purple-700 px-2 py-0.5 rounded text-xs">
                         {span.name}
                       </span>
@@ -498,31 +507,20 @@ function TraceDetailContent() {
               </a>
             </div>
           ) : (
-            <div className="flex flex-wrap gap-2">
-              {llmConfigs.map((cfg) => (
-                <button
-                  key={cfg.id}
-                  onClick={() => toggleLLM(cfg.id)}
-                  className={`text-xs px-3 py-2 rounded-lg border transition-colors flex items-center gap-2 ${
-                    selectedLLMs.includes(cfg.id)
-                      ? "bg-primary-100 border-primary-400 text-primary-800"
-                      : "bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100"
-                  }`}
-                >
-                  <span className={`w-2 h-2 rounded-full ${
-                    cfg.role === "judge" ? "bg-purple-500"
-                    : cfg.role === "generator" ? "bg-blue-500"
-                    : "bg-gray-400"
-                  }`} />
-                  <div className="text-left">
-                    <span className="font-medium">{cfg.name}</span>
-                    <span className="text-gray-400 ml-1">
-                      ({cfg.provider}/{cfg.model_id})
-                    </span>
-                  </div>
-                </button>
-              ))}
-            </div>
+            <MultiSelectPicker
+              options={llmConfigs.map((cfg): PickerOption => ({
+                value: cfg.id,
+                label: cfg.name,
+                group: cfg.role,
+                description: `${cfg.provider}/${cfg.model_id}`,
+              }))}
+              selected={selectedLLMs}
+              onChange={setSelectedLLMs}
+              placeholder="Select judge LLM(s)..."
+              searchPlaceholder="Search LLM configs..."
+              groupLabels={LLM_ROLE_LABELS}
+              emptyText="No LLM configs found."
+            />
           )}
           <p className="text-xs text-gray-500 mt-1">
             Select multiple LLMs to compare evaluation results across judges.
@@ -534,25 +532,24 @@ function TraceDetailContent() {
           <label className="block text-sm font-medium text-gray-700 mb-2">
             Step 2: Select Metrics
           </label>
-          <div className="flex flex-wrap gap-2">
-            {Object.entries(info).map(([key, mi]: [string, any]) => (
-              <button
-                key={key}
-                onClick={() => toggleMetric(key)}
-                className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
-                  selectedMetrics.includes(key)
-                    ? "bg-primary-100 border-primary-400 text-primary-800"
-                    : "bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100"
-                }`}
-              >
-                {mi.name}
-                {mi.needs_ground_truth && <span className="ml-1 text-purple-600">*</span>}
-              </button>
-            ))}
+          <MultiSelectPicker
+            options={Object.entries(info).map(([key, mi]: [string, any]): PickerOption => ({
+              value: key,
+              label: mi.name,
+              group: mi.source || "obtrac",
+              badge: mi.needs_ground_truth ? "GT" : undefined,
+            }))}
+            selected={selectedMetrics}
+            onChange={setSelectedMetrics}
+            placeholder="Select metrics..."
+            searchPlaceholder="Search metrics..."
+            groupLabels={METRIC_SOURCE_LABELS}
+            emptyText="No metrics found."
+          />
+          <div className="text-xs text-gray-500 mt-1 flex items-center gap-1">
+            <Badge variant="outline" className="text-[10px]">GT</Badge>
+            = Requires ground truth
           </div>
-          <p className="text-xs text-gray-500 mt-1">
-            <span className="text-purple-600">*</span> = Requires ground truth
-          </p>
         </div>
 
         {/* Step 3: Ground Truth */}
@@ -563,26 +560,12 @@ function TraceDetailContent() {
             </label>
 
             {/* Toggle: Manual vs Dataset */}
-            <div className="flex gap-2 mb-3">
-              <button
-                type="button"
-                onClick={() => setGtSource("manual")}
-                className={`text-xs px-3 py-1.5 rounded-lg border transition-colors ${
-                  gtSource === "manual" ? "bg-indigo-50 border-indigo-300 text-indigo-700 font-medium" : "bg-gray-50 border-gray-200 text-gray-600"
-                }`}
-              >
-                Type Manually
-              </button>
-              <button
-                type="button"
-                onClick={() => setGtSource("dataset")}
-                className={`text-xs px-3 py-1.5 rounded-lg border transition-colors ${
-                  gtSource === "dataset" ? "bg-indigo-50 border-indigo-300 text-indigo-700 font-medium" : "bg-gray-50 border-gray-200 text-gray-600"
-                }`}
-              >
-                Pick from Dataset ({datasets.length})
-              </button>
-            </div>
+            <Tabs value={gtSource} onValueChange={(v) => setGtSource(v as "manual" | "dataset")} className="mb-3">
+              <TabsList>
+                <TabsTrigger value="manual">Type Manually</TabsTrigger>
+                <TabsTrigger value="dataset">Pick from Dataset ({datasets.length})</TabsTrigger>
+              </TabsList>
+            </Tabs>
 
             {gtSource === "manual" ? (
               <textarea
@@ -651,7 +634,7 @@ function TraceDetailContent() {
             className={`px-6 py-2.5 rounded-lg text-sm font-medium transition-all ${
               evalRunning
                 ? "bg-yellow-500 text-white animate-pulse cursor-wait"
-                : "bg-primary-600 text-white hover:bg-primary-700 disabled:opacity-50"
+                : "bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
             }`}
           >
             {evalRunning ? (
