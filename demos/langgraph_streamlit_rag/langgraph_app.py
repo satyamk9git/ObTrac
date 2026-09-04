@@ -29,7 +29,6 @@ RAG_EVAL_METRICS = [
     "context_precision",
     "context_recall",
     "answer_correctness",
-    "answer_similarity",
 ]
 
 config = obtrac_config(
