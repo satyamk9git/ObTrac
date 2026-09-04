@@ -81,6 +81,10 @@ agents = [
     "langgraph==1.2.11",
     "langchain-openai==1.6.0",
 ]
+# Only needed for demos/google_adk — the ADK demo agents themselves run
+# through LiteLLM (Anthropic), not Vertex/Gemini, so no Google Cloud
+# credentials are required to use this extra.
+adk = ["google-adk==2.8.0"]
 all = [
     "ragas==0.4.3",
     "instructor==1.16.0",
@@ -93,6 +97,7 @@ all = [
     "pypdf>=4.0.0,<7.0.0",
     "langgraph==1.2.11",
     "langchain-openai==1.6.0",
+    "google-adk==2.8.0",
 ]
 
 [project.scripts]
