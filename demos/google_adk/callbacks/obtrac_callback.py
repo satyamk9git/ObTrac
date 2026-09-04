@@ -130,9 +130,12 @@ def obtrac_after_agent(callback_context) -> None:
 
         trace_obj.finish()
 
-        # Collect context from retrieval spans
+        # Collect context from retrieval spans. span_type is a (str, Enum)
+        # SpanType member — str(SpanType.RETRIEVAL) is "SpanType.RETRIEVAL",
+        # not "retrieval", so a substring check against str() never matches;
+        # compare directly since SpanType.RETRIEVAL == "retrieval" is True.
         for span in trace_obj.spans:
-            if span.span_type and "retrieval" in str(span.span_type):
+            if span.span_type == "retrieval":
                 r = (span.outputs or {}).get("result", "")
                 if r:
                     trace_obj.context += str(r) + "\n"

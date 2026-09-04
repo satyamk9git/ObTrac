@@ -58,10 +58,8 @@ obtrac_config(
 )
 
 _model = LiteLlm(
-    model=f"azure/{os.getenv('AZURE_OPENAI_DEPLOYMENT', 'gpt-4o')}",
-    api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-    api_base=os.getenv("AZURE_OPENAI_ENDPOINT"),
-    api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-12-01-preview"),
+    model="anthropic/claude-sonnet-5",
+    api_key=os.getenv("ANTHROPIC_API_KEY"),
 )
 
 root_agent = Agent(
@@ -81,7 +79,9 @@ Workflow for every question:
 3. If chunks are not relevant, call web_search and answer from those results.
 4. Always be concise and cite your sources.
 
-Topics in the knowledge base: ObTrac, RAG, LLMs, Google ADK.""",
+The knowledge base is NimbusDB's product handbook, covering: pricing,
+architecture, consistency modes, change data capture (CDC), security,
+known limitations, support/SLA, migration, and query language (NQL).""",
     tools=[rag_lookup, web_search],
     before_agent_callback=obtrac_before_agent,
     after_agent_callback=obtrac_after_agent,

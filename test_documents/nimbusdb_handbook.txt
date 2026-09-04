@@ -1,0 +1,211 @@
+NimbusDB Product Handbook
+Version 4.2 — Last updated Q3 2026
+
+===============================================================================
+1. OVERVIEW
+===============================================================================
+
+NimbusDB is a distributed, serverless document database built for
+high-throughput applications that need single-digit-millisecond reads at
+global scale. It combines a document data model (JSON-native, schema-flexible)
+with strong consistency guarantees inside a single region and tunable
+consistency across regions.
+
+NimbusDB is developed by Nimbus Systems Inc., founded in 2021 and
+headquartered in Austin, Texas, with engineering offices in Berlin and
+Bangalore. As of Q3 2026, NimbusDB serves over 4,200 customers and processes
+approximately 38 billion requests per day across its managed cloud offering.
+
+Core design goals, in priority order:
+  1. Predictable low-latency reads (p99 under 8ms within a region)
+  2. Zero-downtime schema evolution
+  3. Automatic horizontal scaling without manual resharding
+  4. Multi-region replication with configurable consistency levels
+  5. Built-in change-data-capture (CDC) streaming
+
+===============================================================================
+2. ARCHITECTURE
+===============================================================================
+
+NimbusDB uses a disaggregated storage-and-compute architecture. Each cluster
+consists of three layers:
+
+  - Query Router Layer: stateless nodes that parse queries, apply access
+    control, and route requests to the correct storage shard. Query routers
+    autoscale independently of storage and typically run 3-12 instances per
+    region depending on load.
+
+  - Storage Engine Layer: a log-structured merge-tree (LSM-tree) storage
+    engine called "Cascade" that groups documents into shards of roughly
+    2GB each. Cascade compacts in the background using a tiered compaction
+    strategy tuned to minimize write amplification (typical write
+    amplification factor: 3.1x, compared to 8-12x for naive LSM
+    implementations).
+
+  - Consensus Layer: each shard is replicated across 3 or 5 nodes (customer
+    configurable) using a Raft-based consensus protocol called "Ferry."
+    Ferry elects a leader per shard; writes go through the leader and are
+    considered committed after a majority of replicas acknowledge.
+
+Cross-region replication is asynchronous by default (eventual consistency,
+typical replication lag 120-400ms depending on distance) but can be switched
+to synchronous mode for a given collection, which raises write latency to
+match the round-trip time to the furthest required region.
+
+===============================================================================
+3. PRICING
+===============================================================================
+
+NimbusDB offers three tiers as of Q3 2026:
+
+  Starter — $0/month
+    - Single region, shared compute
+    - Up to 1GB storage, 25M requests/month included
+    - No SLA, community support only
+    - Best for prototyping and side projects
+
+  Growth — $89/month base + usage
+    - Single region, dedicated compute (1 vCPU / 4GB RAM baseline)
+    - $0.25 per GB stored per month above 10GB included
+    - $0.90 per million requests above 100M included
+    - 99.9% uptime SLA
+    - Email support, 24-hour response target
+
+  Enterprise — custom pricing, starts around $2,400/month
+    - Multi-region, dedicated compute, autoscaling to customer-defined caps
+    - 99.99% uptime SLA with service credits
+    - Dedicated Slack channel + 1-hour response target for Sev-1 incidents
+    - Optional: single-tenant deployment, VPC peering, custom encryption keys
+    - Volume discounts apply above 500M requests/month
+
+A 14-day free trial of the Enterprise tier is available; no credit card is
+required to start the trial, but a card is required to continue past day 14.
+
+===============================================================================
+4. QUERY LANGUAGE
+===============================================================================
+
+NimbusDB queries are expressed in NQL (Nimbus Query Language), a
+JSON-based query syntax similar in spirit to MongoDB's query language but
+with a few notable differences:
+
+  - NQL supports native full-text search via the `$text` operator without
+    requiring a separate search index product — full-text indexes are
+    declared inline on collection creation.
+  - NQL's `$join` operator performs a bounded lookup join across
+    collections (max 3 hops) — this is NOT a general-purpose relational
+    join and is optimized for denormalized document patterns, not
+    star-schema analytics.
+  - Aggregation pipelines are limited to 25 stages per query; queries
+    exceeding this limit are rejected at parse time with error code
+    NQL-4091.
+
+Example query — find all orders over $500 placed in the last 30 days,
+joined with customer tier:
+
+    {
+      "find": "orders",
+      "where": { "amount": { "$gt": 500 }, "createdAt": { "$gte": "$now-30d" } },
+      "$join": { "collection": "customers", "on": "customerId", "as": "customer" },
+      "limit": 100
+    }
+
+===============================================================================
+5. CONSISTENCY MODES
+===============================================================================
+
+NimbusDB supports four consistency modes, configurable per collection:
+
+  - STRONG: reads always reflect the latest committed write, served only by
+    the shard leader. Highest latency, used for financial/inventory data.
+  - BOUNDED_STALENESS: reads may lag writes by at most a configured time
+    window (default 5 seconds) or version count (default 100 versions),
+    whichever comes first. Good default for most applications.
+  - SESSION: a client's own writes are always visible to its own
+    subsequent reads (read-your-writes), but it may not see other clients'
+    very recent writes. Implemented via a session token passed by the
+    client SDK.
+  - EVENTUAL: no ordering guarantees beyond eventual convergence. Lowest
+    latency, used for analytics rollups and non-critical caches.
+
+Changing a collection's consistency mode does not require downtime but can
+take up to 60 seconds to fully propagate across all query router nodes.
+
+===============================================================================
+6. CHANGE DATA CAPTURE (CDC)
+===============================================================================
+
+Every write to NimbusDB can be streamed in near-real-time via the CDC
+feature, introduced in v3.0 and significantly rewritten in v4.0 for lower
+lag. CDC events are published to one of three sinks:
+
+  1. NimbusStream — Nimbus's own managed pub/sub product (lowest lag,
+     typically under 200ms from commit to delivery)
+  2. Kafka — via a certified Kafka Connect source connector
+  3. Webhook — HTTP POST to a customer-specified endpoint, with at-least-once
+     delivery and exponential backoff retry (up to 6 attempts over 24 hours)
+
+CDC is NOT enabled by default on new collections — it must be explicitly
+turned on, since enabling it adds approximately 4-7% write overhead due to
+the additional log capture.
+
+===============================================================================
+7. SECURITY & COMPLIANCE
+===============================================================================
+
+NimbusDB Enterprise is SOC 2 Type II certified (audit renewed annually,
+most recent report dated May 2026) and supports HIPAA-compliant deployments
+under a signed BAA. It is NOT currently FedRAMP authorized — this is on the
+public roadmap for late 2027 but has no committed date.
+
+Encryption:
+  - At rest: AES-256, with Enterprise customers able to bring their own
+    encryption keys (BYOK) via AWS KMS or GCP Cloud KMS integration.
+  - In transit: TLS 1.3 required for all client connections; TLS 1.2 is
+    accepted but deprecated and logs a warning on every connection.
+
+Authentication supports API keys (default), OAuth 2.0 client credentials
+flow, and for Enterprise customers, mutual TLS (mTLS) with customer-managed
+certificate authorities.
+
+===============================================================================
+8. KNOWN LIMITATIONS
+===============================================================================
+
+  - Maximum document size: 4MB (hard limit, not configurable). Larger
+    payloads should be stored in object storage with a reference stored
+    in NimbusDB.
+  - Maximum of 64 secondary indexes per collection.
+  - Transactions span at most 1 shard — there is no cross-shard
+    multi-document transaction support as of v4.2. This is the single
+    most requested feature on the public roadmap.
+  - The `$join` operator (see Section 4) cannot be used inside a
+    transaction.
+  - Point-in-time restore is available for the last 35 days on Enterprise,
+    7 days on Growth, and is not available on Starter.
+
+===============================================================================
+9. SUPPORT & SLA DETAILS
+===============================================================================
+
+Sev-1 (production down): Enterprise 1-hour response, Growth 4-hour
+response (business hours only), Starter no SLA.
+Sev-2 (major feature degraded): Enterprise 4-hour response, Growth
+1-business-day response.
+Sev-3 (minor issue, question): Enterprise 1-business-day response, Growth
+2-business-day response.
+
+Enterprise SLA credits: 10% of monthly fee for each 0.1% below the 99.99%
+uptime target in a given month, capped at 50% of that month's fee.
+
+===============================================================================
+10. MIGRATION FROM OTHER DATABASES
+===============================================================================
+
+Nimbus Systems provides a free migration tool, `nimbus-migrate`, supporting
+direct import from MongoDB (via oplog tailing for near-zero-downtime
+migration), PostgreSQL/JSONB columns, and flat JSON/CSV/BSON file dumps.
+Typical migration time for a 100GB MongoDB cluster is 6-10 hours depending
+on document complexity and target shard count. Nimbus Systems' migration
+engineering team offers hands-on migration support to Enterprise customers
+at no additional cost for migrations under 1TB.
