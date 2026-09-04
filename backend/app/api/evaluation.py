@@ -202,6 +202,11 @@ def run_evaluation(req: EvalRequest, db: Session = Depends(get_db)):
 
         metric_results = MetricRunner.run(runnable_metrics, eval_input, judge_config)
         result_dict = {r.metric: r.score for r in metric_results if r.score is not None}
+        # A metric that was runnable but failed mid-scoring (bad judge
+        # response, adapter exception, etc.) has score=None and previously
+        # just vanished from the response with no trace of the failure —
+        # surface it instead of silently dropping it.
+        failed_dict = {r.metric: (r.error or "Unknown error") for r in metric_results if r.score is None}
 
         if not result_dict and runnable_metrics:
             return {
@@ -209,6 +214,7 @@ def run_evaluation(req: EvalRequest, db: Session = Depends(get_db)):
                 "status": "error",
                 "error": "Judge LLM did not return valid scores for any metric. Check the LLM config and try again.",
                 "skipped": skipped_metrics,
+                "failed": failed_dict,
             }
 
         # Generate suggestions
@@ -228,6 +234,7 @@ def run_evaluation(req: EvalRequest, db: Session = Depends(get_db)):
             "trace_id": req.trace_id,
             "status": "success",
             "metrics": result_dict,
+            "failed": failed_dict,
             "suggestions": suggestions,
             "skipped": skipped_metrics,
             "ground_truth_used": bool(ground_truth),
@@ -770,6 +777,7 @@ def _run_single_llm_eval(trace, llm_cfg, metrics, contexts, ground_truth, expect
         )
         metric_results = MetricRunner.run(metrics, eval_input, llm_cfg)
         result_dict = {r.metric: r.score for r in metric_results if r.score is not None}
+        failed_dict = {r.metric: (r.error or "Unknown error") for r in metric_results if r.score is None}
 
         if not result_dict and metrics:
             return {
@@ -779,6 +787,7 @@ def _run_single_llm_eval(trace, llm_cfg, metrics, contexts, ground_truth, expect
                 "status": "error",
                 "error": "Judge LLM did not return valid scores for any metric",
                 "metrics": {},
+                "failed": failed_dict,
             }
 
         return {
@@ -787,6 +796,7 @@ def _run_single_llm_eval(trace, llm_cfg, metrics, contexts, ground_truth, expect
             "llm_model": llm_cfg.model_id,
             "status": "success",
             "metrics": result_dict,
+            "failed": failed_dict,
         }
 
     except Exception as e:

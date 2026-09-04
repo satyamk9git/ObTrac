@@ -199,6 +199,7 @@ def build_metrics() -> list[MetricDefinition]:
         ToolCorrectnessMetric,
         ArgumentCorrectnessMetric,
         ToxicityMetric,
+        TaskCompletionMetric,
     )
 
     return [
@@ -277,6 +278,19 @@ def build_metrics() -> list[MetricDefinition]:
             key="deepeval_argument_correctness", display_name="Argument Correctness (DeepEval)",
             description="Whether the arguments passed to the tools that were called are sensible given the question — doesn't require an expected-tools reference, unlike Tool Correctness.",
             metric_cls=ArgumentCorrectnessMetric, needs_tool_calls=True, threshold=0.7,
+        ),
+        DeepEvalMetricAdapter(
+            key="deepeval_task_completion", display_name="Task Completion (DeepEval)",
+            description=(
+                "Whether the agent's tool-call trajectory and final answer actually "
+                "completed the task implied by the question — infers the task from "
+                "the question and the tools called, then judges the outcome against it. "
+                "Note: DeepEval's StepEfficiency/PlanAdherence/PlanQuality/AgentLoopDetection "
+                "metrics were evaluated and excluded — they hard-require DeepEval's own "
+                "@observe trace format with no fallback, which Cortexa's trace model doesn't "
+                "populate, so they'd always return a degenerate fixed score."
+            ),
+            metric_cls=TaskCompletionMetric, needs_tool_calls=True, threshold=0.6,
         ),
         GEvalMetricAdapter(
             key="geval_conciseness", display_name="Conciseness (G-Eval)",
