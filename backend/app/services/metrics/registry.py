@@ -86,11 +86,7 @@ def _register_external_adapters(registry: MetricRegistry) -> None:
     except Exception:
         logger.exception("Failed to register MLflow metrics despite mlflow being importable")
 
-    try:
-        from app.services.metrics.phoenix_adapter import build_metrics as build_phoenix_metrics
-        for metric in build_phoenix_metrics():
-            registry.register(metric)
-    except ImportError:
-        pass
-    except Exception:
-        logger.exception("Failed to register Phoenix metrics despite arize-phoenix-evals being importable")
+    # Arize Phoenix metrics are implemented (phoenix_adapter.py) but disabled
+    # for now — not registered, so they won't appear in metrics-info or be
+    # runnable. Re-enable by restoring the block that called build_metrics()
+    # from phoenix_adapter here, same pattern as the deepeval block above.
