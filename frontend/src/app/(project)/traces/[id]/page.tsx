@@ -5,7 +5,7 @@ import { useParams, useSearchParams } from "next/navigation";
 import SpanTree from "@/components/SpanTree";
 import MetricExplainModal from "@/components/MetricExplainModal";
 import MultiSelectPicker, { PickerOption } from "@/components/ui/multi-select-picker";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { METRIC_SOURCE_LABELS } from "@/lib/metric-sources";
 
@@ -269,6 +269,25 @@ function TraceDetailContent() {
         </div>
       </div>
 
+      {/* Explain Modal */}
+      {explainMetric && (
+        <MetricExplainModal
+          traceId={traceId}
+          metric={explainMetric.metric}
+          score={explainMetric.score}
+          metricName={explainMetric.name}
+          onClose={() => setExplainMetric(null)}
+        />
+      )}
+
+      <Tabs defaultValue="overview">
+        <TabsList className="mb-6">
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="evaluate">Evaluate</TabsTrigger>
+          <TabsTrigger value="execution">Execution</TabsTrigger>
+        </TabsList>
+
+      <TabsContent value="overview">
       {/* Annotation / Feedback */}
       <div className="card mb-6">
         <h3 className="text-sm font-semibold text-gray-700 mb-3">Feedback & Annotations</h3>
@@ -334,84 +353,6 @@ function TraceDetailContent() {
         )}
       </div>
 
-      {/* Prompts — extracted from generation spans */}
-      {trace.spans?.filter((s: any) => s.span_type === "generation").length > 0 && (
-        <div className="bg-white rounded-lg border p-4 mb-6">
-          <h3 className="text-sm font-semibold text-gray-600 mb-3">Prompts Sent to LLM</h3>
-          <div className="space-y-3">
-            {trace.spans
-              .filter((s: any) => s.span_type === "generation")
-              .map((span: any, i: number) => {
-                // Extract prompt from span inputs
-                const inputs = span.inputs || {};
-                let prompt = "";
-                // Check common patterns for where the prompt lives
-                if (inputs.context && inputs.query) {
-                  prompt = `[System/Template Prompt]\nContext:\n${inputs.context}\n\nQuestion: ${inputs.query}`;
-                } else if (inputs.messages) {
-                  try {
-                    const msgs = typeof inputs.messages === "string" ? JSON.parse(inputs.messages) : inputs.messages;
-                    prompt = Array.isArray(msgs)
-                      ? msgs.map((m: any) => `[${m.role}]: ${m.content}`).join("\n\n")
-                      : String(inputs.messages);
-                  } catch {
-                    prompt = String(inputs.messages);
-                  }
-                } else if (inputs.prompt) {
-                  prompt = String(inputs.prompt);
-                } else {
-                  // Fallback: show all inputs
-                  prompt = Object.entries(inputs)
-                    .map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`)
-                    .join("\n\n");
-                }
-
-                return (
-                  <details key={span.span_id || i} open={i === 0}>
-                    <summary className="cursor-pointer text-sm font-medium text-gray-700 hover:text-primary flex items-center gap-2">
-                      <span className="bg-purple-100 text-purple-700 px-2 py-0.5 rounded text-xs">
-                        {span.name}
-                      </span>
-                      <span className="text-xs text-gray-400">
-                        {(span.latency_ms || 0).toFixed(0)}ms
-                        {span.model && ` | ${span.model}`}
-                      </span>
-                    </summary>
-                    <pre className="mt-2 p-3 bg-gray-900 text-green-400 rounded-lg text-xs overflow-auto max-h-64 whitespace-pre-wrap font-mono">
-                      {prompt || "No prompt data captured"}
-                    </pre>
-                    {/* Show raw output too */}
-                    {span.outputs?.result && (
-                      <details className="mt-1">
-                        <summary className="text-xs text-gray-500 cursor-pointer">
-                          LLM Response
-                        </summary>
-                        <pre className="mt-1 p-2 bg-gray-50 rounded text-xs overflow-auto max-h-32 whitespace-pre-wrap">
-                          {typeof span.outputs.result === "string"
-                            ? span.outputs.result.substring(0, 1000)
-                            : JSON.stringify(span.outputs.result, null, 2).substring(0, 1000)}
-                        </pre>
-                      </details>
-                    )}
-                  </details>
-                );
-              })}
-          </div>
-        </div>
-      )}
-
-      {/* Context */}
-      {trace.context && (
-        <details className="bg-white rounded-lg border p-4 mb-6">
-          <summary className="text-sm font-semibold text-gray-600 cursor-pointer">
-            Retrieved Context
-          </summary>
-          <p className="text-sm text-gray-700 whitespace-pre-wrap max-h-48 overflow-auto mt-2">
-            {trace.context}
-          </p>
-        </details>
-      )}
-
       {/* Existing Metrics */}
       {trace.metrics && Object.keys(trace.metrics).length > 0 && (
         <div className="mb-6">
@@ -454,17 +395,6 @@ function TraceDetailContent() {
         </div>
       )}
 
-      {/* Explain Modal */}
-      {explainMetric && (
-        <MetricExplainModal
-          traceId={traceId}
-          metric={explainMetric.metric}
-          score={explainMetric.score}
-          metricName={explainMetric.name}
-          onClose={() => setExplainMetric(null)}
-        />
-      )}
-
       {/* Existing Suggestions */}
       {trace.suggestions?.length > 0 && (
         <div className="mb-6">
@@ -478,14 +408,17 @@ function TraceDetailContent() {
           </div>
         </div>
       )}
+      </TabsContent>
 
+      <TabsContent value="evaluate">
       {/* ========================================
           EVALUATION SECTION
           ======================================== */}
       <div className="bg-white rounded-lg border p-6 mb-6">
-        <h2 className="text-lg font-semibold text-gray-800 mb-4">
+        <h2 className="text-lg font-semibold text-gray-800 mb-1">
           Run Evaluation
         </h2>
+        <p className="text-xs text-gray-500 mb-4">Score this trace with one or more judge LLMs against selected metrics.</p>
 
         {/* Step 1: Select LLMs */}
         <div className="mb-5">
@@ -842,10 +775,92 @@ function TraceDetailContent() {
           <p className="text-sm text-red-700">{evalResult.error}</p>
         </div>
       )}
+      </TabsContent>
+
+      <TabsContent value="execution">
+      {/* Prompts — extracted from generation spans */}
+      {trace.spans?.filter((s: any) => s.span_type === "generation").length > 0 && (
+        <div className="bg-white rounded-lg border p-4 mb-6">
+          <h3 className="text-sm font-semibold text-gray-600 mb-3">Prompts Sent to LLM</h3>
+          <div className="space-y-3">
+            {trace.spans
+              .filter((s: any) => s.span_type === "generation")
+              .map((span: any, i: number) => {
+                // Extract prompt from span inputs
+                const inputs = span.inputs || {};
+                let prompt = "";
+                // Check common patterns for where the prompt lives
+                if (inputs.context && inputs.query) {
+                  prompt = `[System/Template Prompt]\nContext:\n${inputs.context}\n\nQuestion: ${inputs.query}`;
+                } else if (inputs.messages) {
+                  try {
+                    const msgs = typeof inputs.messages === "string" ? JSON.parse(inputs.messages) : inputs.messages;
+                    prompt = Array.isArray(msgs)
+                      ? msgs.map((m: any) => `[${m.role}]: ${m.content}`).join("\n\n")
+                      : String(inputs.messages);
+                  } catch {
+                    prompt = String(inputs.messages);
+                  }
+                } else if (inputs.prompt) {
+                  prompt = String(inputs.prompt);
+                } else {
+                  // Fallback: show all inputs
+                  prompt = Object.entries(inputs)
+                    .map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`)
+                    .join("\n\n");
+                }
+
+                return (
+                  <details key={span.span_id || i} open={i === 0}>
+                    <summary className="cursor-pointer text-sm font-medium text-gray-700 hover:text-primary flex items-center gap-2">
+                      <span className="bg-purple-100 text-purple-700 px-2 py-0.5 rounded text-xs">
+                        {span.name}
+                      </span>
+                      <span className="text-xs text-gray-400">
+                        {(span.latency_ms || 0).toFixed(0)}ms
+                        {span.model && ` | ${span.model}`}
+                      </span>
+                    </summary>
+                    <pre className="mt-2 p-3 bg-gray-900 text-green-400 rounded-lg text-xs overflow-auto max-h-64 whitespace-pre-wrap font-mono">
+                      {prompt || "No prompt data captured"}
+                    </pre>
+                    {/* Show raw output too */}
+                    {span.outputs?.result && (
+                      <details className="mt-1">
+                        <summary className="text-xs text-gray-500 cursor-pointer">
+                          LLM Response
+                        </summary>
+                        <pre className="mt-1 p-2 bg-gray-50 rounded text-xs overflow-auto max-h-32 whitespace-pre-wrap">
+                          {typeof span.outputs.result === "string"
+                            ? span.outputs.result.substring(0, 1000)
+                            : JSON.stringify(span.outputs.result, null, 2).substring(0, 1000)}
+                        </pre>
+                      </details>
+                    )}
+                  </details>
+                );
+              })}
+          </div>
+        </div>
+      )}
+
+      {/* Context */}
+      {trace.context && (
+        <details className="bg-white rounded-lg border p-4 mb-6">
+          <summary className="text-sm font-semibold text-gray-600 cursor-pointer">
+            Retrieved Context
+          </summary>
+          <p className="text-sm text-gray-700 whitespace-pre-wrap max-h-48 overflow-auto mt-2">
+            {trace.context}
+          </p>
+        </details>
+      )}
 
       {/* Span Tree */}
       <h2 className="text-lg font-semibold text-gray-800 mb-3">Span Tree</h2>
       <SpanTree spans={trace.spans} />
+      </TabsContent>
+      </Tabs>
     </div>
   );
 }
