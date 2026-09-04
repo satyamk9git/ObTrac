@@ -13,7 +13,6 @@ const DEFAULT_MISSING_EVAL_METRICS = [
   "context_precision",
   "context_recall",
   "answer_correctness",
-  "answer_similarity",
 ];
 
 function DashboardContent() {
