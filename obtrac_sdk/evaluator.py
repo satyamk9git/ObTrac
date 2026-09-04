@@ -106,15 +106,6 @@ class SuggestionEngine:
                 "to your prompt."
             ),
         },
-        "answer_similarity": {
-            "threshold": 0.7,
-            "low_suggestion": (
-                "The answer is semantically different from ground truth. "
-                "This may indicate the model is rephrasing too aggressively or "
-                "missing key details. Try: (1) Use more explicit prompting, "
-                "(2) Increase context window."
-            ),
-        },
     }
 
     def generate_suggestions(self, metrics: dict[str, float]) -> list[str]:

@@ -204,22 +204,6 @@ METRIC_KNOWLEDGE = {
             "Use structured output (JSON) to enforce specific fields",
         ],
     },
-    "answer_similarity": {
-        "what": "Measures semantic similarity (cosine distance) between the answer and ground truth. Lower-bound check for correctness.",
-        "scoring": "1.0 = semantically identical. 0.0 = completely different topics.",
-        "common_causes_low": [
-            "Answer is too short compared to ground truth (or vice versa)",
-            "Different vocabulary used (synonyms not captured by embeddings)",
-            "Answer is in a different format/structure",
-            "Embedding model is not domain-specific",
-        ],
-        "improvement_techniques": [
-            "Match the format/length of your ground truth in your prompts",
-            "Use a more powerful embedding model (text-embedding-3-large)",
-            "Normalize both answers (lowercase, strip punctuation) before comparison",
-            "Generate ground truth and answers using the same LLM family",
-        ],
-    },
 }
 
 
