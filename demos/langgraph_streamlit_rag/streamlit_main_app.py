@@ -215,7 +215,7 @@ def process_file(uploaded_file):
 # Sidebar
 # ---------------------------------------------------------------------------
 with st.sidebar:
-    st.image("frontend/public/obtrac_logo.png", width=48)
+    st.image("frontend/public/cortexa_logo.png", width=48)
     st.markdown("## ObTrac Test App")
     st.caption("v0.6.7 — Every call is traced")
 
