@@ -1,5 +1,5 @@
 """
-ObTrac Test App — Main Streamlit UI
+Cortexa Test App — Main Streamlit UI
 
 Modes:
   1. Simple Chat     — direct Q&A with Azure OpenAI, traced
@@ -41,7 +41,7 @@ from demos.simple_multi_tool_agent.agent import run_agent
 # Page config
 # ---------------------------------------------------------------------------
 st.set_page_config(
-    page_title="ObTrac Test App",
+    page_title="Cortexa Test App",
     page_icon="🔭",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -216,7 +216,7 @@ def process_file(uploaded_file):
 # ---------------------------------------------------------------------------
 with st.sidebar:
     st.image("frontend/public/cortexa_logo.png", width=48)
-    st.markdown("## ObTrac Test App")
+    st.markdown("## Cortexa Test App")
     st.caption("v0.6.7 — Every call is traced")
 
     st.divider()
@@ -250,7 +250,7 @@ with st.sidebar:
 
     st.divider()
     st.markdown("**Links**")
-    st.markdown("🔭 [ObTrac Dashboard](http://localhost:3100)")
+    st.markdown("🔭 [Cortexa Dashboard](http://localhost:3100)")
     st.markdown("📊 [Sessions](http://localhost:3100/sessions)")
     st.markdown("💬 [Traces](http://localhost:3100/traces)")
 
